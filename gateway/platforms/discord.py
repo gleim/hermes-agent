@@ -409,7 +409,7 @@ class DiscordAdapter(BasePlatformAdapter):
     - Receiving messages from servers and DMs
     - Sending responses with Discord markdown
     - Thread support
-    - Native slash commands (/ask, /reset, /status, /stop)
+    - Native slash commands (/ask, /reset, /status, /stop, /dfy-*, /dfy-oracle)
     - Button-based exec approvals
     - Auto-threading for long conversations
     - Reaction-based feedback
@@ -1121,6 +1121,218 @@ class DiscordAdapter(BasePlatformAdapter):
             return True
         return user_id in self._allowed_user_ids
 
+    def _dfy_slash_role_ok(self, interaction: discord.Interaction) -> bool:
+        """Optional DISCORD_DFY_ROLE_IDS gate (DISCORD_INTEL_ROLE_IDS still honored)."""
+        raw = (os.getenv("DISCORD_DFY_ROLE_IDS", "") or os.getenv("DISCORD_INTEL_ROLE_IDS", "")).strip()
+        if not raw:
+            return True
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            return False
+        required = {r.strip() for r in raw.split(",") if r.strip()}
+        if not required:
+            return True
+        have = {str(r.id) for r in member.roles}
+        return bool(required & have)
+
+    async def _slash_dfy_json_reply(self, interaction: discord.Interaction, payload: Any) -> None:
+        import json as _json
+
+        text = _json.dumps(payload, indent=2, default=str)
+        if len(text) > 1850:
+            text = text[:1850] + "\n…(truncated)"
+        await interaction.followup.send(f"```json\n{text}\n```", ephemeral=True)
+
+    def _dfy_oracle_collect_strategy_sources(self) -> List[Dict[str, Any]]:
+        from pathlib import Path
+
+        paths: List[str] = []
+        for entry in (os.getenv("DFY_ORACLE_STRATEGY_PATHS", "") or "").split(","):
+            p = entry.strip()
+            if p:
+                paths.append(p)
+        strategy_dir = (os.getenv("DFY_ORACLE_STRATEGY_DIR", "") or "").strip()
+        if strategy_dir:
+            d = Path(strategy_dir)
+            if d.is_dir():
+                paths.extend(str(x) for x in sorted(d.glob("*.py"))[:12])
+        out: List[Dict[str, Any]] = []
+        for raw in paths[:8]:
+            path = Path(raw).expanduser()
+            try:
+                if not path.is_file():
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+                if len(text) > 14000:
+                    text = text[:14000] + "\n# ... truncated ...\n"
+                out.append({"path": str(path.resolve()), "source": text})
+            except OSError:
+                continue
+        return out
+
+    async def _run_dfy_mechanisms_slash(self, interaction: discord.Interaction) -> None:
+        if not self._is_allowed_user(str(interaction.user.id)):
+            await interaction.response.send_message("Not authorized for this bot.", ephemeral=True)
+            return
+        if not self._dfy_slash_role_ok(interaction):
+            await interaction.response.send_message(
+                "You need a server role allowed for DFY commands.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        from dfy_intel.store import get_dfy_store
+
+        await self._slash_dfy_json_reply(interaction, get_dfy_store().get_mechanisms())
+
+    async def _run_dfy_signals_slash(self, interaction: discord.Interaction, limit: int) -> None:
+        if not self._is_allowed_user(str(interaction.user.id)):
+            await interaction.response.send_message("Not authorized for this bot.", ephemeral=True)
+            return
+        if not self._dfy_slash_role_ok(interaction):
+            await interaction.response.send_message(
+                "You need a server role allowed for DFY commands.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        from dfy_intel.store import get_dfy_store
+
+        data = {"items": get_dfy_store().get_signals(limit=limit)}
+        await self._slash_dfy_json_reply(interaction, data)
+
+    async def _run_dfy_activity_slash(self, interaction: discord.Interaction, limit: int) -> None:
+        if not self._is_allowed_user(str(interaction.user.id)):
+            await interaction.response.send_message("Not authorized for this bot.", ephemeral=True)
+            return
+        if not self._dfy_slash_role_ok(interaction):
+            await interaction.response.send_message(
+                "You need a server role allowed for DFY commands.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        from dfy_intel.store import get_dfy_store
+
+        data = {"items": get_dfy_store().get_activity(limit=limit)}
+        await self._slash_dfy_json_reply(interaction, data)
+
+    async def _run_dfy_oracle_slash(self, interaction: discord.Interaction, focus: str) -> None:
+        import json as _json
+
+        if not self._is_allowed_user(str(interaction.user.id)):
+            await interaction.response.send_message("Not authorized for this bot.", ephemeral=True)
+            return
+        if not self._dfy_slash_role_ok(interaction):
+            await interaction.response.send_message(
+                "You need a server role allowed for DFY commands.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        from dfy_intel.store import get_dfy_store
+
+        store = get_dfy_store()
+        sources = self._dfy_oracle_collect_strategy_sources()
+        payload = {
+            "role": "dfy_strategy_oracle",
+            "focus": (focus or "").strip(),
+            "strategy_sources": sources,
+            "signals_recent": store.get_signals(limit=40),
+            "mechanisms": store.get_mechanisms(),
+            "activity_recent": store.get_activity(limit=25),
+        }
+        instructions = f"""[DFY Strategy Oracle — internal analysis]
+
+You are the **DFY strategy oracle** for this trading stack. You understand strategy implementation internals: indicator pipelines, entry/exit columns, tunable parameters, risk (ROI/stoploss), and how live indicator snapshots relate to recent signals.
+
+User focus (optional): {(focus or "").strip()!r}
+
+Use the JSON block below (strategy source files, live DFY mechanisms including open trades and per-pair indicators, recent signals, activity). Give **intelligent, specific** insight:
+1. What the active logic is doing vs. the code (entries/exits, thresholds).
+2. How the **latest signals** line up with that logic; call out divergences or confirmation.
+3. Risks, anomalies, or data gaps.
+4. 2–4 concrete checks the operator could run next.
+
+Be concise but technical; cite indicator/signal keys from the data when possible.
+
+--- DFY_CONTEXT_JSON ---
+{_json.dumps(payload, indent=2, default=str)[:24000]}
+--- END ---"""
+        event = self._build_slash_event(interaction, instructions)
+        await self.handle_message(event)
+        try:
+            await interaction.followup.send("Oracle prompt dispatched to Hermes — see channel reply.", ephemeral=True)
+        except Exception as exc:
+            logger.debug("dfy oracle followup: %s", exc)
+
+    async def _run_dfy_live_slash(
+        self,
+        interaction: discord.Interaction,
+        view: str,
+        pair: str,
+        timescale: int,
+    ) -> None:
+        import json as _json
+
+        if not self._is_allowed_user(str(interaction.user.id)):
+            await interaction.response.send_message("Not authorized for this bot.", ephemeral=True)
+            return
+        if not self._dfy_slash_role_ok(interaction):
+            await interaction.response.send_message(
+                "You need a server role allowed for DFY commands.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        from dfy_intel.ft_rest_client import FtRestError, fetch_live
+        from dfy_intel.store import get_dfy_store
+
+        try:
+            data = fetch_live(view, pair=pair or None, timescale=timescale)
+        except FtRestError as exc:
+            await interaction.followup.send(
+                f"DFY live REST failed ({exc}). Set **DFY_FT_API_URL**, **DFY_FT_API_USER**, "
+                "**DFY_FT_API_PASSWORD** to match your runner `api_server` block.",
+                ephemeral=True,
+            )
+            return
+
+        mechanisms = get_dfy_store().get_mechanisms()
+        raw_rpc = _json.dumps(data, indent=2, default=str)
+        raw_mech = _json.dumps(mechanisms, indent=2, default=str)
+        if len(raw_rpc) > 22000:
+            raw_rpc = raw_rpc[:22000] + "\n…(truncated)"
+        if len(raw_mech) > 8000:
+            raw_mech = raw_mech[:8000] + "\n…(truncated)"
+
+        instructions = f"""[DFY live operator view — RPC-aligned panels]
+
+These payloads mirror the **same RPC surfaces** documented for the reference Telegram bundle (status, profit, balance, performance, time buckets, tag stats, locks, health, etc.), but here you must ground commentary in the **DFY mechanisms** snapshot and any strategy context you already have.
+
+**Selected view:** `{view}`
+**Pair filter (entries / exits / mix_tags):** {pair or "(none)"}
+**Timescale (daily / weekly / monthly):** {timescale}
+
+**Runner REST JSON**
+```json
+{raw_rpc}
+```
+
+**DFY mechanisms (feed alignment)**
+```json
+{raw_mech}
+```
+
+You are Hermes. Provide **strategy-aware live analysis**:
+1. Summarize what this RPC slice implies for open risk and performance.
+2. Cross-check against DFY mechanisms (open trades, per-pair snapshots) when relevant.
+3. Call out anomalies, staleness, or missing data.
+4. Offer 2–4 concise follow-ups the operator should verify.
+
+Stay factual; cite fields from the JSON when possible."""
+        event = self._build_slash_event(interaction, instructions)
+        await self.handle_message(event)
+        try:
+            await interaction.followup.send("Live analysis dispatched to Hermes — see channel reply.", ephemeral=True)
+        except Exception as exc:
+            logger.debug("dfy live followup: %s", exc)
+
     async def send_image_file(
         self,
         chat_id: str,
@@ -1496,6 +1708,83 @@ class DiscordAdapter(BasePlatformAdapter):
         ):
             await interaction.response.defer(ephemeral=True)
             await self._handle_thread_create_slash(interaction, name, message, auto_archive_duration)
+
+        @tree.command(
+            name="dfy-mechanisms",
+            description="DFY mechanisms snapshot (x402 GET /v1/dfy/mechanisms)",
+        )
+        async def slash_dfy_mechanisms(interaction: discord.Interaction):
+            await self._run_dfy_mechanisms_slash(interaction)
+
+        @tree.command(
+            name="dfy-signals",
+            description="Recent DFY signals (x402 GET /v1/dfy/signals)",
+        )
+        @discord.app_commands.describe(limit="Max items (1–200, default 25)")
+        async def slash_dfy_signals(interaction: discord.Interaction, limit: int = 25):
+            lim = max(1, min(int(limit), 200))
+            await self._run_dfy_signals_slash(interaction, lim)
+
+        @tree.command(
+            name="dfy-activity",
+            description="Recent DFY activity log (x402 GET /v1/dfy/activity)",
+        )
+        @discord.app_commands.describe(limit="Max items (1–200, default 25)")
+        async def slash_dfy_activity(interaction: discord.Interaction, limit: int = 25):
+            lim = max(1, min(int(limit), 200))
+            await self._run_dfy_activity_slash(interaction, lim)
+
+        @tree.command(
+            name="dfy-oracle",
+            description="Strategy oracle: Hermes analyzes DFY feed + strategy source (set DFY_ORACLE_STRATEGY_PATHS)",
+        )
+        @discord.app_commands.describe(
+            focus="Optional topic e.g. 'entries on BTC/USDT' or 'why no exits'",
+        )
+        async def slash_dfy_oracle(interaction: discord.Interaction, focus: str = ""):
+            await self._run_dfy_oracle_slash(interaction, focus)
+
+        @tree.command(
+            name="dfy-live",
+            description="Live runner RPC view + Hermes commentary (same surfaces as Telegram; read-only REST)",
+        )
+        @discord.app_commands.describe(
+            view="RPC panel to fetch",
+            pair="Optional pair for entries / exits / mix_tags (e.g. BTC/USDT)",
+            timescale="Lookback for daily / weekly / monthly (days)",
+        )
+        @discord.app_commands.choices(
+            view=[
+                discord.app_commands.Choice(name="status — open trades", value="status"),
+                discord.app_commands.Choice(name="profit — closed P&L summary", value="profit"),
+                discord.app_commands.Choice(name="balance — per-currency balances", value="balance"),
+                discord.app_commands.Choice(name="performance — finished trades by pair", value="performance"),
+                discord.app_commands.Choice(name="trades — recent trade history", value="trades"),
+                discord.app_commands.Choice(name="daily — P&L by day", value="daily"),
+                discord.app_commands.Choice(name="weekly — P&L by week", value="weekly"),
+                discord.app_commands.Choice(name="monthly — P&L by month", value="monthly"),
+                discord.app_commands.Choice(name="stats — exit reasons & hold times", value="stats"),
+                discord.app_commands.Choice(name="count — trade slots used/available", value="count"),
+                discord.app_commands.Choice(name="locks — pair locks", value="locks"),
+                discord.app_commands.Choice(name="health — bot loop heartbeat", value="health"),
+                discord.app_commands.Choice(name="version — runner version", value="version"),
+                discord.app_commands.Choice(name="sysinfo — host load", value="sysinfo"),
+                discord.app_commands.Choice(name="whitelist — tradable pairs", value="whitelist"),
+                discord.app_commands.Choice(name="entries — profit by enter tag", value="entries"),
+                discord.app_commands.Choice(name="exits — profit by exit reason", value="exits"),
+                discord.app_commands.Choice(name="mix_tags — enter tag × exit reason", value="mix_tags"),
+                discord.app_commands.Choice(name="config — show_config excerpt", value="config"),
+                discord.app_commands.Choice(name="logs — recent log lines", value="logs"),
+            ]
+        )
+        async def slash_dfy_live(
+            interaction: discord.Interaction,
+            view: str,
+            pair: str = "",
+            timescale: int = 7,
+        ):
+            ts = max(1, min(int(timescale), 365))
+            await self._run_dfy_live_slash(interaction, view, pair, ts)
 
     def _build_slash_event(self, interaction: discord.Interaction, text: str) -> MessageEvent:
         """Build a MessageEvent from a Discord slash command interaction."""
