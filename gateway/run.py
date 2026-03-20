@@ -1191,6 +1191,13 @@ class GatewayRunner:
                 return None
             return APIServerAdapter(config)
 
+        elif platform == Platform.X402_INTEL:
+            from gateway.platforms.x402_intel import X402IntelAdapter, check_x402_intel_requirements
+            if not check_x402_intel_requirements():
+                logger.warning("x402 intel: aiohttp not installed")
+                return None
+            return X402IntelAdapter(config)
+
         return None
     
     def _is_user_authorized(self, source: SessionSource) -> bool:

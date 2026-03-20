@@ -56,6 +56,7 @@ class Platform(Enum):
     SMS = "sms"
     DINGTALK = "dingtalk"
     API_SERVER = "api_server"
+    X402_INTEL = "x402_intel"
 
 
 @dataclass
@@ -253,6 +254,8 @@ class GatewayConfig:
                 connected.append(platform)
             # API Server uses enabled flag only (no token needed)
             elif platform == Platform.API_SERVER:
+                connected.append(platform)
+            elif platform == Platform.X402_INTEL:
                 connected.append(platform)
         return connected
     
@@ -733,6 +736,22 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
                 pass
         if api_server_host:
             config.platforms[Platform.API_SERVER].extra["host"] = api_server_host
+
+    # x402 trading intel HTTP gateway
+    x402_intel_enabled = os.getenv("X402_INTEL_ENABLED", "").lower() in ("true", "1", "yes")
+    x402_intel_port = os.getenv("X402_INTEL_PORT")
+    x402_intel_host = os.getenv("X402_INTEL_HOST")
+    if x402_intel_enabled:
+        if Platform.X402_INTEL not in config.platforms:
+            config.platforms[Platform.X402_INTEL] = PlatformConfig()
+        config.platforms[Platform.X402_INTEL].enabled = True
+        if x402_intel_port:
+            try:
+                config.platforms[Platform.X402_INTEL].extra["port"] = int(x402_intel_port)
+            except ValueError:
+                pass
+        if x402_intel_host:
+            config.platforms[Platform.X402_INTEL].extra["host"] = x402_intel_host
 
     # Session settings
     idle_minutes = os.getenv("SESSION_IDLE_MINUTES")
