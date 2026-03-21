@@ -798,6 +798,7 @@ def cmd_model(args):
         "ai-gateway": "AI Gateway",
         "kilocode": "Kilo Code",
         "alibaba": "Alibaba Cloud (DashScope)",
+        "venice": "Venice AI",
         "custom": "Custom endpoint",
     }
     active_label = provider_labels.get(active, active)

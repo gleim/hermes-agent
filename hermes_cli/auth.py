@@ -212,6 +212,14 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         api_key_env_vars=("KILOCODE_API_KEY",),
         base_url_env_var="KILOCODE_BASE_URL",
     ),
+    "venice": ProviderConfig(
+        id="venice",
+        name="Venice AI",
+        auth_type="api_key",
+        inference_base_url="https://api.venice.ai/api/v1",
+        api_key_env_vars=("VENICE_API_KEY",),
+        base_url_env_var="VENICE_BASE_URL",
+    ),
 }
 
 
@@ -660,6 +668,7 @@ def resolve_provider(
         "opencode": "opencode-zen", "zen": "opencode-zen",
         "go": "opencode-go", "opencode-go-sub": "opencode-go",
         "kilo": "kilocode", "kilo-code": "kilocode", "kilo-gateway": "kilocode",
+        "venice-ai": "venice", "veniceai": "venice",
     }
     normalized = _PROVIDER_ALIASES.get(normalized, normalized)
 

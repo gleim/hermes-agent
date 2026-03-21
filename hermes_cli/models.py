@@ -197,6 +197,24 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "qwen3.5-flash",
         "qwen-vl-max",
     ],
+    "venice": [
+        "llama-3.3-70b",
+        "qwen3-235b-a22b-instruct-2507",
+        "qwen3-235b-a22b-thinking-2507",
+        "deepseek-ai-DeepSeek-R1",
+        "qwen3-coder-480b-a35b-instruct",
+        "hermes-3-llama-3.1-405b",
+        "zai-org-glm-4.7",
+        "grok-41-fast",
+        "kimi-k2-thinking",
+        "gemini-3-pro-preview",
+        "openai-gpt-oss-120b",
+        "qwen3-next-80b",
+        "mistral-31-24b",
+        "venice-uncensored",
+        "google-gemma-3-27b-it",
+        "qwen3-4b",
+    ],
 }
 
 _PROVIDER_LABELS = {
@@ -216,6 +234,7 @@ _PROVIDER_LABELS = {
     "ai-gateway": "AI Gateway",
     "kilocode": "Kilo Code",
     "alibaba": "Alibaba Cloud (DashScope)",
+    "venice": "Venice AI",
     "custom": "Custom endpoint",
 }
 
@@ -251,6 +270,8 @@ _PROVIDER_ALIASES = {
     "aliyun": "alibaba",
     "qwen": "alibaba",
     "alibaba-cloud": "alibaba",
+    "venice-ai": "venice",
+    "veniceai": "venice",
 }
 
 
@@ -285,7 +306,7 @@ def list_available_providers() -> list[dict[str, str]]:
     _PROVIDER_ORDER = [
         "openrouter", "nous", "openai-codex", "copilot", "copilot-acp",
         "zai", "kimi-coding", "minimax", "minimax-cn", "kilocode", "anthropic", "alibaba",
-        "opencode-zen", "opencode-go",
+        "venice", "opencode-zen", "opencode-go",
         "ai-gateway", "deepseek", "custom",
     ]
     # Build reverse alias map
