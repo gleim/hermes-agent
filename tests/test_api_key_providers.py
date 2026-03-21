@@ -44,6 +44,7 @@ class TestProviderRegistry:
         ("minimax-cn", "MiniMax (China)", "api_key"),
         ("ai-gateway", "AI Gateway", "api_key"),
         ("kilocode", "Kilo Code", "api_key"),
+        ("venice", "Venice AI", "api_key"),
     ])
     def test_provider_registered(self, provider_id, name, auth_type):
         assert provider_id in PROVIDER_REGISTRY
@@ -96,6 +97,12 @@ class TestProviderRegistry:
         assert PROVIDER_REGISTRY["minimax-cn"].inference_base_url == "https://api.minimaxi.com/anthropic"
         assert PROVIDER_REGISTRY["ai-gateway"].inference_base_url == "https://ai-gateway.vercel.sh/v1"
         assert PROVIDER_REGISTRY["kilocode"].inference_base_url == "https://api.kilo.ai/api/gateway"
+        assert PROVIDER_REGISTRY["venice"].inference_base_url == "https://api.venice.ai/api/v1"
+
+    def test_venice_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["venice"]
+        assert pconfig.api_key_env_vars == ("VENICE_API_KEY",)
+        assert pconfig.base_url_env_var == "VENICE_BASE_URL"
 
     def test_oauth_providers_unchanged(self):
         """Ensure we didn't break the existing OAuth providers."""
@@ -116,6 +123,7 @@ PROVIDER_ENV_VARS = (
     "KIMI_API_KEY", "KIMI_BASE_URL", "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY",
     "AI_GATEWAY_API_KEY", "AI_GATEWAY_BASE_URL",
     "KILOCODE_API_KEY", "KILOCODE_BASE_URL",
+    "VENICE_API_KEY", "VENICE_BASE_URL",
     "DASHSCOPE_API_KEY", "OPENCODE_ZEN_API_KEY", "OPENCODE_GO_API_KEY",
     "NOUS_API_KEY", "GITHUB_TOKEN", "GH_TOKEN",
     "OPENAI_BASE_URL", "HERMES_COPILOT_ACP_COMMAND", "COPILOT_CLI_PATH",
@@ -184,6 +192,15 @@ class TestResolveProvider:
     def test_alias_kilo_gateway(self):
         assert resolve_provider("kilo-gateway") == "kilocode"
 
+    def test_explicit_venice(self):
+        assert resolve_provider("venice") == "venice"
+
+    def test_alias_venice_ai(self):
+        assert resolve_provider("venice-ai") == "venice"
+
+    def test_alias_veniceai(self):
+        assert resolve_provider("veniceai") == "venice"
+
     def test_alias_case_insensitive(self):
         assert resolve_provider("GLM") == "zai"
         assert resolve_provider("Z-AI") == "zai"
@@ -234,6 +251,10 @@ class TestResolveProvider:
     def test_auto_detects_kilocode_key(self, monkeypatch):
         monkeypatch.setenv("KILOCODE_API_KEY", "test-kilo-key")
         assert resolve_provider("auto") == "kilocode"
+
+    def test_auto_detects_venice_key(self, monkeypatch):
+        monkeypatch.setenv("VENICE_API_KEY", "test-venice-key")
+        assert resolve_provider("auto") == "venice"
 
     def test_openrouter_takes_priority_over_glm(self, monkeypatch):
         """OpenRouter API key should win over GLM in auto-detection."""
@@ -428,6 +449,19 @@ class TestResolveApiKeyProviderCredentials:
         creds = resolve_api_key_provider_credentials("kilocode")
         assert creds["base_url"] == "https://custom.kilo.example/v1"
 
+    def test_resolve_venice_with_key(self, monkeypatch):
+        monkeypatch.setenv("VENICE_API_KEY", "venice-secret-key")
+        creds = resolve_api_key_provider_credentials("venice")
+        assert creds["provider"] == "venice"
+        assert creds["api_key"] == "venice-secret-key"
+        assert creds["base_url"] == "https://api.venice.ai/api/v1"
+
+    def test_resolve_venice_custom_base_url(self, monkeypatch):
+        monkeypatch.setenv("VENICE_API_KEY", "venice-key")
+        monkeypatch.setenv("VENICE_BASE_URL", "https://custom.venice.example/v1")
+        creds = resolve_api_key_provider_credentials("venice")
+        assert creds["base_url"] == "https://custom.venice.example/v1"
+
     def test_resolve_with_custom_base_url(self, monkeypatch):
         monkeypatch.setenv("GLM_API_KEY", "glm-key")
         monkeypatch.setenv("GLM_BASE_URL", "https://custom.glm.example/v4")
@@ -506,6 +540,15 @@ class TestRuntimeProviderResolution:
         assert result["api_mode"] == "chat_completions"
         assert result["api_key"] == "kilo-key"
         assert "kilo.ai" in result["base_url"]
+
+    def test_runtime_venice(self, monkeypatch):
+        monkeypatch.setenv("VENICE_API_KEY", "venice-key")
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        result = resolve_runtime_provider(requested="venice")
+        assert result["provider"] == "venice"
+        assert result["api_mode"] == "chat_completions"
+        assert result["api_key"] == "venice-key"
+        assert "venice.ai" in result["base_url"]
 
     def test_runtime_auto_detects_api_key_provider(self, monkeypatch):
         monkeypatch.setenv("KIMI_API_KEY", "auto-kimi-key")

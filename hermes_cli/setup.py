@@ -80,6 +80,7 @@ _DEFAULT_PROVIDER_MODELS = {
     "minimax-cn": ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1"],
     "ai-gateway": ["anthropic/claude-opus-4.6", "anthropic/claude-sonnet-4.6", "openai/gpt-5", "google/gemini-3-flash"],
     "kilocode": ["anthropic/claude-opus-4.6", "anthropic/claude-sonnet-4.6", "openai/gpt-5.4", "google/gemini-3-pro-preview", "google/gemini-3-flash-preview"],
+    "venice": ["llama-3.3-70b", "qwen3-235b-a22b-instruct-2507", "deepseek-ai-DeepSeek-R1", "qwen3-coder-480b-a35b-instruct", "hermes-3-llama-3.1-405b", "venice-uncensored", "qwen3-4b"],
 }
 
 
@@ -885,6 +886,7 @@ def setup_model_provider(config: dict):
         "Anthropic (Claude models — API key or Claude Code subscription)",
         "AI Gateway (Vercel — 200+ models, pay-per-use)",
         "Alibaba Cloud / DashScope (Qwen models via Anthropic-compatible API)",
+        "Venice AI (private inference, uncensored open models)",
         "OpenCode Zen (35+ curated models, pay-as-you-go)",
         "OpenCode Go (open models, $10/month subscription)",
         "GitHub Copilot (uses GITHUB_TOKEN or gh auth token)",
@@ -1494,7 +1496,40 @@ def setup_model_provider(config: dict):
         _update_config_for_provider("alibaba", pconfig.inference_base_url, default_model="qwen3.5-plus")
         _set_model_provider(config, "alibaba", pconfig.inference_base_url)
 
-    elif provider_idx == 12:  # OpenCode Zen
+    elif provider_idx == 12:  # Venice AI
+        selected_provider = "venice"
+        print()
+        print_header("Venice AI API Key")
+        pconfig = PROVIDER_REGISTRY["venice"]
+        print_info(f"Provider: {pconfig.name}")
+        print_info(f"Base URL: {pconfig.inference_base_url}")
+        print_info("Get your API key at: https://venice.ai/settings/api")
+        print()
+
+        existing_key = get_env_value("VENICE_API_KEY")
+        if existing_key:
+            print_info(f"Current: {existing_key[:8]}... (configured)")
+            if prompt_yes_no("Update API key?", False):
+                api_key = prompt("  Venice API key", password=True)
+                if api_key:
+                    save_env_value("VENICE_API_KEY", api_key)
+                    print_success("Venice API key updated")
+        else:
+            api_key = prompt("  Venice API key", password=True)
+            if api_key:
+                save_env_value("VENICE_API_KEY", api_key)
+                print_success("Venice API key saved")
+            else:
+                print_warning("Skipped - agent won't work without an API key")
+
+        # Clear custom endpoint vars if switching
+        if existing_custom:
+            save_env_value("OPENAI_BASE_URL", "")
+            save_env_value("OPENAI_API_KEY", "")
+        _set_model_provider(config, "venice", pconfig.inference_base_url)
+        selected_base_url = pconfig.inference_base_url
+
+    elif provider_idx == 13:  # OpenCode Zen
         selected_provider = "opencode-zen"
         print()
         print_header("OpenCode Zen API Key")
@@ -1527,7 +1562,7 @@ def setup_model_provider(config: dict):
         _set_model_provider(config, "opencode-zen", pconfig.inference_base_url)
         selected_base_url = pconfig.inference_base_url
 
-    elif provider_idx == 13:  # OpenCode Go
+    elif provider_idx == 14:  # OpenCode Go
         selected_provider = "opencode-go"
         print()
         print_header("OpenCode Go API Key")
@@ -1560,7 +1595,7 @@ def setup_model_provider(config: dict):
         _set_model_provider(config, "opencode-go", pconfig.inference_base_url)
         selected_base_url = pconfig.inference_base_url
 
-    elif provider_idx == 14:  # GitHub Copilot
+    elif provider_idx == 15:  # GitHub Copilot
         selected_provider = "copilot"
         print()
         print_header("GitHub Copilot")
@@ -1593,7 +1628,7 @@ def setup_model_provider(config: dict):
         _set_model_provider(config, "copilot", pconfig.inference_base_url)
         selected_base_url = pconfig.inference_base_url
 
-    elif provider_idx == 15:  # GitHub Copilot ACP
+    elif provider_idx == 16:  # GitHub Copilot ACP
         selected_provider = "copilot-acp"
         print()
         print_header("GitHub Copilot ACP")
@@ -1609,7 +1644,7 @@ def setup_model_provider(config: dict):
         _set_model_provider(config, "copilot-acp", pconfig.inference_base_url)
         selected_base_url = pconfig.inference_base_url
 
-    # else: provider_idx == 16 (Keep current) — only shown when a provider already exists
+    # else: provider_idx == 17 (Keep current) — only shown when a provider already exists
     # Normalize "keep current" to an explicit provider so downstream logic
     # doesn't fall back to the generic OpenRouter/static-model path.
     if selected_provider is None:
