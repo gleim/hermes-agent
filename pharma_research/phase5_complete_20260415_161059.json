@@ -1,0 +1,34 @@
+{
+  "timestamp": "2026-04-15T16:10:48.397831",
+  "phase": "Target-Disease Association Analysis",
+  "targets": [
+    {
+      "symbol": "EGFR",
+      "chembl_id": "CHEMBL3608",
+      "name": "Epidermal growth factor receptor",
+      "type": "SINGLE PROTEIN",
+      "diseases": [],
+      "disease_count": 0
+    },
+    {
+      "symbol": "ALK",
+      "chembl_id": "CHEMBL4247",
+      "name": "ALK tyrosine kinase receptor",
+      "type": "SINGLE PROTEIN",
+      "diseases": [],
+      "disease_count": 0
+    },
+    {
+      "symbol": "BRAF",
+      "chembl_id": "CHEMBL2331061",
+      "name": "Serine/threonine-protein kinase B-raf",
+      "type": "SINGLE PROTEIN",
+      "diseases": [],
+      "disease_count": 0
+    }
+  ],
+  "summary": {
+    "total_targets": 3,
+    "total_disease_associations": 0
+  }
+}

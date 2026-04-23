@@ -1,0 +1,7 @@
+{
+  "gnomad_variants": {
+    "sample_count": 140000,
+    "variant_count": 5000000,
+    "coverage": "Global"
+  }
+}

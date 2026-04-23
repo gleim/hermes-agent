@@ -1,0 +1,174 @@
+{
+  "bioinformatics": {
+    "tcga_expression": {
+      "BRCA": {
+        "sample_count": 1100,
+        "gene_expression": true,
+        "variants": 50000,
+        "drugs": [
+          "Tamoxifen",
+          "Letrozole",
+          "Anastrozole"
+        ]
+      },
+      "LUAD": {
+        "sample_count": 500,
+        "gene_expression": true,
+        "variants": 30000,
+        "drugs": [
+          "Osimertinib",
+          "Cisplatin",
+          "Pemetrexed"
+        ]
+      }
+    },
+    "gtex_normal": {
+      "expression_profiles": {
+        "tissues": [
+          "Liver",
+          "Kidney",
+          "Brain",
+          "Heart"
+        ],
+        "sample_count": 10000,
+        "eQTL_count": 200000
+      }
+    },
+    "population_variants": {
+      "gnomad_variants": {
+        "sample_count": 140000,
+        "variant_count": 5000000,
+        "coverage": "Global"
+      }
+    }
+  },
+  "market_discovery": {
+    "generatedAt": "2026-04-16T03:23:55.623Z",
+    "discoveryThemes": [
+      {
+        "theme": "Synthetic lethality expansion",
+        "description": "Variant bundles that strengthen PARP inhibitor response models and oncology liquidity.",
+        "supportingPaperIds": [
+          "paper-aurora",
+          "paper-immuno"
+        ],
+        "buyerProfiles": [
+          "Global oncology pharma",
+          "Hospital research alliances",
+          "Precision medicine venture studios"
+        ],
+        "priceSignal": {
+          "midpoint": 4.4,
+          "change": "+0.6",
+          "isPositive": true
+        }
+      },
+      {
+        "theme": "Neurology inflammation signals",
+        "description": "Ultra-rare ALS and FTD markers tied to glial activation trajectories.",
+        "supportingPaperIds": [
+          "paper-neuro"
+        ],
+        "buyerProfiles": [
+          "Neurology CROs",
+          "Academic translational labs"
+        ],
+        "priceSignal": {
+          "midpoint": 3.1,
+          "change": "+0.2",
+          "isPositive": true
+        }
+      },
+      {
+        "theme": "Immune-metabolic compliance bundles",
+        "description": "Consent-aware IBD cohorts where payer pilots demand dynamic governance.",
+        "supportingPaperIds": [
+          "paper-immuno"
+        ],
+        "buyerProfiles": [
+          "Payer RWE teams",
+          "Integrated delivery networks"
+        ],
+        "priceSignal": {
+          "midpoint": 3.6,
+          "change": "-0.1",
+          "isPositive": false
+        }
+      }
+    ],
+    "marketMetrics": [
+      {
+        "label": "Curated clinical-grade variants",
+        "value": "9,820",
+        "delta": "+8.2% QoQ",
+        "positive": true
+      },
+      {
+        "label": "Regulated buyers onboarded",
+        "value": "47",
+        "delta": "+5 new licenses",
+        "positive": true
+      },
+      {
+        "label": "Compliance exceptions",
+        "value": "1 active",
+        "delta": "-2 WoW",
+        "positive": true
+      },
+      {
+        "label": "Avg. discovery-to-order cycle",
+        "value": "3.6 days",
+        "delta": "-0.8 days",
+        "positive": true
+      }
+    ],
+    "regulatorySnapshots": [
+      {
+        "region": "United States",
+        "owner": "Atlas Compliance Office",
+        "status": "green",
+        "lastAudit": "2025-12-05",
+        "controls": [
+          "HIPAA",
+          "GINA",
+          "CLIA data segregation"
+        ],
+        "note": "Cleared for accelerated institutional onboarding."
+      },
+      {
+        "region": "EU / EEA",
+        "owner": "Charter BioBank BV",
+        "status": "amber",
+        "lastAudit": "2025-12-06",
+        "controls": [
+          "GDPR Art.32 encryption",
+          "EU AI transparency pack"
+        ],
+        "note": "Awaiting AI explainability addendum for automated pricing."
+      },
+      {
+        "region": "APAC (Singapore)",
+        "owner": "Pacific Data Trust",
+        "status": "green",
+        "lastAudit": "2025-12-07",
+        "controls": [
+          "PDPA consent ledger",
+          "Cross-border tokenization"
+        ],
+        "note": "Ready for bilateral data swaps with US hospital systems."
+      }
+    ]
+  },
+  "cross_references": {
+    "cancer_targets": [],
+    "drug_genes": [
+      "Osimertinib",
+      "Anastrozole",
+      "Tamoxifen",
+      "Cisplatin",
+      "Letrozole",
+      "Pemetrexed"
+    ],
+    "population_variants": []
+  }
+}

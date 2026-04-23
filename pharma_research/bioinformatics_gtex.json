@@ -1,0 +1,12 @@
+{
+  "expression_profiles": {
+    "tissues": [
+      "Liver",
+      "Kidney",
+      "Brain",
+      "Heart"
+    ],
+    "sample_count": 10000,
+    "eQTL_count": 200000
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "target_genes": [
+    "EGFR",
+    "ALK",
+    "BRAF",
+    "KRAS"
+  ],
+  "response_profiles": {
+    "EGFR": {
+      "inhibitors": [
+        "Osimertinib",
+        "Gefitinib",
+        "Erlotinib"
+      ],
+      "response_rate": 0.75,
+      "resistance_markers": [
+        "T790M"
+      ]
+    },
+    "ALK": {
+      "inhibitors": [
+        "Crizotinib",
+        "Alectinib",
+        "Lorlatinib"
+      ],
+      "response_rate": 0.8,
+      "resistance_markers": [
+        "ALK_G1202R"
+      ]
+    }
+  }
+}

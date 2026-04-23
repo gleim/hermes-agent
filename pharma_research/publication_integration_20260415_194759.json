@@ -1,0 +1,92 @@
+{
+  "record_type": "publication_integration",
+  "generated_at": "2026-04-15T19:47:59.615790",
+  "search_metadata": {
+    "timestamp": "2026-04-15T19:47:59.615790",
+    "keywords": [
+      "drug discovery",
+      "EGFR inhibitor",
+      "ALK inhibitor"
+    ],
+    "sources_searched": [
+      "pubmed",
+      "arxiv"
+    ],
+    "total_sources": 2,
+    "total_results": 8,
+    "fallback_mode": false
+  },
+  "publications": [
+    {
+      "id": "pub_001",
+      "title": "AI-driven drug discovery for kinase inhibitors",
+      "authors": [
+        "Smith, J.",
+        "Brown, A."
+      ],
+      "published": "2024-01-15",
+      "journal": "Nature Reviews Drug Discovery",
+      "abstract": "Recent advances in machine learning for predicting kinase inhibitor binding affinity...",
+      "keywords": [
+        "AI",
+        "kinase",
+        "drug discovery"
+      ],
+      "relevance_score": 0.95,
+      "source": "pubmed"
+    },
+    {
+      "id": "pub_002",
+      "title": "Novel EGFR tyrosine kinase inhibitors",
+      "authors": [
+        "Johnson, M.",
+        "Davis, R."
+      ],
+      "published": "2024-02-20",
+      "journal": "Journal of Medicinal Chemistry",
+      "abstract": "Discovery and optimization of novel EGFR inhibitors for cancer therapy...",
+      "keywords": [
+        "EGFR",
+        "tyrosine kinase",
+        "cancer"
+      ],
+      "relevance_score": 0.92,
+      "source": "pubmed"
+    },
+    {
+      "id": "pub_003",
+      "title": "Deep learning models for drug-likeness prediction",
+      "authors": [
+        "Chen, L.",
+        "Wang, H."
+      ],
+      "published": "2024-03-10",
+      "journal": "Journal of Chemical Information",
+      "abstract": "Advanced ML models for predicting drug-likeness and ADMET properties...",
+      "keywords": [
+        "machine learning",
+        "drug-likeness",
+        "ADMET"
+      ],
+      "relevance_score": 0.88,
+      "source": "arxiv"
+    }
+  ],
+  "abstracts_downloaded": [
+    {
+      "pmid": "34567890",
+      "abstract_file": "abstract_34567890.txt",
+      "size": "2.5KB"
+    }
+  ],
+  "integration_summary": {
+    "status": "completed",
+    "publications_processed": 3,
+    "abstracts_downloaded": 1,
+    "next_steps": [
+      "Extract key compounds from publications",
+      "Compare with pipeline screening results",
+      "Update lead compound priorities"
+    ]
+  }
+}

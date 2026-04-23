@@ -1,0 +1,22 @@
+{
+  "BRCA": {
+    "sample_count": 1100,
+    "gene_expression": true,
+    "variants": 50000,
+    "drugs": [
+      "Tamoxifen",
+      "Letrozole",
+      "Anastrozole"
+    ]
+  },
+  "LUAD": {
+    "sample_count": 500,
+    "gene_expression": true,
+    "variants": 30000,
+    "drugs": [
+      "Osimertinib",
+      "Cisplatin",
+      "Pemetrexed"
+    ]
+  }
+}
