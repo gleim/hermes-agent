@@ -1,0 +1,24 @@
+{
+  "timestamp": "2026-04-15T16:13:31.097695",
+  "data_sources": {
+    "ccxt": {
+      "markets": true,
+      "ticker": true
+    },
+    "day1_market": {
+      "discovery": true,
+      "intelligence": true
+    }
+  },
+  "integrated_analysis": {
+    "ccxt_market_count": 18,
+    "ticker_data": "{'symbol': 'BTC/USDT', 'timestamp': 1776294811644, 'datetime': '2026-04-15T23:13:31.644Z', 'high': 3",
+    "discovery_keys": [
+      "generatedAt",
+      "discoveryThemes",
+      "marketMetrics",
+      "regulatorySnapshots"
+    ],
+    "pharma_pipeline": "Active (ChEMBL, PubChem, OpenFDA)"
+  }
+}

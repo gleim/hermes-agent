@@ -1,0 +1,19 @@
+{
+  "endpoints": [
+    "https://your-server.com/webhooks/day1-market",
+    "https://your-server.com/webhooks/research-updates"
+  ],
+  "events": [
+    "new_publication",
+    "research_gaps",
+    "market_changes"
+  ],
+  "filters": {
+    "min_relevance_score": 0.7,
+    "keywords": [
+      "drug discovery",
+      "pharma",
+      "clinical"
+    ]
+  }
+}
