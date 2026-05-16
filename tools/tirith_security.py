@@ -34,6 +34,8 @@ import threading
 import time
 import urllib.request
 
+from hermes_constants import get_hermes_home
+
 logger = logging.getLogger(__name__)
 
 _REPO = "sheeki03/tirith"
@@ -50,7 +52,7 @@ def _env_bool(key: str, default: bool) -> bool:
     val = os.getenv(key)
     if val is None:
         return default
-    return val.lower() in ("1", "true", "yes")
+    return val.lower() in {"1", "true", "yes"}
 
 
 def _env_int(key: str, default: int) -> int:
@@ -99,19 +101,41 @@ _install_failure_reason: str = ""  # reason tag when _resolved_path is _INSTALL_
 _install_lock = threading.Lock()
 _install_thread: threading.Thread | None = None
 
+# Warning de-duplication. The spawn/path warnings live in the hot path —
+# without this dedupe set, a Windows install where ``tirith`` isn't on PATH
+# (e.g. background install thread still running, or install marked failed)
+# spams ``tirith spawn failed: [WinError 2]...`` once per terminal command,
+# easily filling errors.log with hundreds of identical lines.
+_warned_messages: set[str] = set()
+_warned_lock = threading.Lock()
+
+
+def _warn_once(key: str, message: str, *args) -> None:
+    """``logger.warning`` but at-most-once per ``key`` for the process
+    lifetime. Used to avoid drowning the log when a fail-open tirith
+    misconfiguration fires on every command."""
+    with _warned_lock:
+        if key in _warned_messages:
+            return
+        _warned_messages.add(key)
+    logger.warning(message, *args)
+
+
+def _reset_spawn_warning_state() -> None:
+    """Clear the warn-once dedupe set. Called when tirith is freshly
+    (re)installed so a subsequent failure surfaces again — e.g. user
+    deletes the binary mid-session.
+    """
+    with _warned_lock:
+        _warned_messages.clear()
+
 # Disk-persistent failure marker — avoids retry across process restarts
 _MARKER_TTL = 86400  # 24 hours
 
 
 def _get_hermes_home() -> str:
-    """Return the Hermes home directory, respecting HERMES_HOME env var.
-
-    Matches the convention used throughout the codebase (hermes_cli.config,
-    cli.py, gateway/run.py, etc.) so tirith state stays inside the active
-    profile and tests get automatic isolation via conftest's HERMES_HOME
-    monkeypatch.
-    """
-    return os.getenv("HERMES_HOME") or os.path.join(os.path.expanduser("~"), ".hermes")
+    """Return the Hermes home directory, respecting HERMES_HOME env var."""
+    return str(get_hermes_home())
 
 
 def _failure_marker_path() -> str:
@@ -130,7 +154,7 @@ def _read_failure_reason() -> str | None:
         mtime = os.path.getmtime(p)
         if (time.time() - mtime) >= _MARKER_TTL:
             return None
-        with open(p, "r") as f:
+        with open(p, "r", encoding="utf-8") as f:
             return f.read().strip()
     except OSError:
         return None
@@ -164,7 +188,7 @@ def _mark_install_failed(reason: str = ""):
     try:
         p = _failure_marker_path()
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(reason)
     except OSError:
         pass
@@ -172,6 +196,10 @@ def _mark_install_failed(reason: str = ""):
 
 def _clear_install_failed():
     """Remove the failure marker after successful install."""
+    # Reset the warn-once dedupe set so a subsequent failure (e.g. user
+    # deletes the binary) surfaces in the log again instead of being
+    # silently suppressed by a stale dedupe key from before the fix.
+    _reset_spawn_warning_state()
     try:
         os.unlink(_failure_marker_path())
     except OSError:
@@ -190,16 +218,17 @@ def _detect_target() -> str | None:
     system = platform.system()
     machine = platform.machine().lower()
 
+    # Android (Termux) is ABI-compatible with Linux — reuse Linux binaries.
     if system == "Darwin":
         plat = "apple-darwin"
-    elif system == "Linux":
+    elif system in {"Linux", "Android"}:
         plat = "unknown-linux-gnu"
     else:
         return None
 
-    if machine in ("x86_64", "amd64"):
+    if machine in {"x86_64", "amd64"}:
         arch = "x86_64"
-    elif machine in ("aarch64", "arm64"):
+    elif machine in {"aarch64", "arm64"}:
         arch = "aarch64"
     else:
         return None
@@ -260,7 +289,7 @@ def _verify_cosign(checksums_path: str, sig_path: str, cert_path: str) -> bool |
 def _verify_checksum(archive_path: str, checksums_path: str, archive_name: str) -> bool:
     """Verify SHA-256 of the archive against checksums.txt."""
     expected = None
-    with open(checksums_path) as f:
+    with open(checksums_path, encoding="utf-8") as f:
         for line in f:
             # Format: "<hash>  <filename>"
             parts = line.strip().split("  ", 1)
@@ -364,7 +393,21 @@ def _install_tirith(*, log_failures: bool = True) -> tuple[str | None, str]:
 
         src = os.path.join(tmpdir, "tirith")
         dest = os.path.join(_hermes_bin_dir(), "tirith")
-        shutil.move(src, dest)
+        try:
+            shutil.move(src, dest)
+        except OSError:
+            # Cross-device move (common in Docker, NFS): shutil.move() falls
+            # back to copy2 + unlink, but copy2's metadata step can raise
+            # PermissionError.  Use plain copy + manual chmod instead.
+            try:
+                shutil.copy(src, dest)
+            except OSError:
+                # Clean up partial dest to prevent a non-executable retry loop
+                try:
+                    os.unlink(dest)
+                except OSError:
+                    pass
+                return None, "cross_device_copy_failed"
         os.chmod(dest, os.stat(dest).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
         verification = "cosign + SHA-256" if cosign_verified else "SHA-256 only"
@@ -620,6 +663,15 @@ def check_command_security(command: str) -> dict:
     timeout = cfg["tirith_timeout"]
     fail_open = cfg["tirith_fail_open"]
 
+    if tirith_path is None:
+        _warn_once(
+            "tirith_path_none",
+            "tirith path resolved to None; scanning disabled",
+        )
+        if fail_open:
+            return {"action": "allow", "findings": [], "summary": "tirith path unavailable"}
+        return {"action": "block", "findings": [], "summary": "tirith path unavailable (fail-closed)"}
+
     try:
         result = subprocess.run(
             [tirith_path, "check", "--json", "--non-interactive",
@@ -629,16 +681,26 @@ def check_command_security(command: str) -> dict:
             timeout=timeout,
         )
     except OSError as exc:
-        # Covers FileNotFoundError, PermissionError, exec format error
-        logger.warning("tirith spawn failed: %s", exc)
+        # Covers FileNotFoundError, PermissionError, exec format error.
+        # Dedupe by ``(errno, exc class)`` so a transient failure mode
+        # surfaces once but doesn't drown the log on every command —
+        # commonly seen on Windows when the configured path "tirith"
+        # isn't on PATH yet (background install still running, or
+        # install marked failed for the day).
+        spawn_key = f"tirith_spawn_failed:{type(exc).__name__}:{getattr(exc, 'errno', '')}"
+        _warn_once(spawn_key, "tirith spawn failed: %s", exc)
         if fail_open:
             return {"action": "allow", "findings": [], "summary": f"tirith unavailable: {exc}"}
         return {"action": "block", "findings": [], "summary": f"tirith spawn failed (fail-closed): {exc}"}
     except subprocess.TimeoutExpired:
-        logger.warning("tirith timed out after %ds", timeout)
+        _warn_once(
+            f"tirith_timeout:{timeout}",
+            "tirith timed out after %ds",
+            timeout,
+        )
         if fail_open:
             return {"action": "allow", "findings": [], "summary": f"tirith timed out ({timeout}s)"}
-        return {"action": "block", "findings": [], "summary": f"tirith timed out (fail-closed)"}
+        return {"action": "block", "findings": [], "summary": "tirith timed out (fail-closed)"}
 
     # Map exit code to action
     exit_code = result.returncode
