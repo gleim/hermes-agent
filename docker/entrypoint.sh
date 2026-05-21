@@ -165,6 +165,14 @@ case "${HERMES_DASHBOARD:-}" in
         ;;
 esac
 
+# Bridge Railway's PORT env var to API_SERVER_PORT so the api_server adapter
+# listens on the port Railway uses for healthchecks. Only sets the variable
+# when PORT is present (Railway deployment) and API_SERVER_PORT is unset or
+# empty (no explicit override from the user).
+if [ -n "${PORT:-}" ] && [ -z "${API_SERVER_PORT:-}" ]; then
+    export API_SERVER_PORT="$PORT"
+fi
+
 # Final exec: two supported invocation patterns.
 #
 #   docker run <image>                 -> exec `hermes` with no args (legacy default)
