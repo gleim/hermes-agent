@@ -80,6 +80,32 @@ if [ ! -f "$HERMES_HOME/config.yaml" ]; then
     cp "$INSTALL_DIR/cli-config.yaml.example" "$HERMES_HOME/config.yaml"
 fi
 
+# Auto-enable api_server platform when HERMES_API_SERVER_ENABLED is set.
+# This bridges Railway env vars into config.yaml so the API server adapter
+# starts and serves /health for healthchecks.
+case "${HERMES_API_SERVER_ENABLED:-}" in
+    1|true|TRUE|True|yes|YES|Yes)
+        if command -v python3 >/dev/null 2>&1; then
+            python3 -c "
+import yaml, sys
+config_path = '$HERMES_HOME/config.yaml'
+try:
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f) or {}
+    platforms = cfg.setdefault('platforms', {})
+    api_server = platforms.setdefault('api_server', {})
+    if not api_server.get('enabled'):
+        api_server['enabled'] = True
+        with open(config_path, 'w') as f:
+            yaml.dump(cfg, f, default_flow_style=False)
+        print('Enabled api_server platform in config.yaml')
+except Exception as e:
+    print(f'Warning: could not auto-enable api_server: {e}', file=sys.stderr)
+"
+        fi
+        ;;
+esac
+
 # SOUL.md
 if [ ! -f "$HERMES_HOME/SOUL.md" ]; then
     cp "$INSTALL_DIR/docker/SOUL.md" "$HERMES_HOME/SOUL.md"
