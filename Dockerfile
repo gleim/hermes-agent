@@ -124,4 +124,8 @@ RUN uv pip install --no-cache-dir --no-deps -e "."
 ENV HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist
 ENV HERMES_HOME=/opt/data
 ENV PATH="/opt/data/.local/bin:${PATH}"
+# Ensure the entrypoint script is executable regardless of Git file mode.
+# The GitHub API can strip the executable bit when modifying files, and
+# `chmod a+rX` (used above) only propagates existing execute permissions.
+RUN chmod +x /opt/hermes/docker/entrypoint.sh
 ENTRYPOINT [ "/usr/bin/tini", "-g", "--", "/opt/hermes/docker/entrypoint.sh" ]
