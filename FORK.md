@@ -61,7 +61,19 @@ Registered in `gateway/platforms/discord.py` (`_register_slash_commands`). Insta
 
 1. Mixin **first** in the class declaration: `class MyStrat(DfyHermesIntelMixin, IStrategy):`
 2. At the end of **`populate_indicators`**, call `self.dfy_intel_on_indicators(dataframe, metadata)` (already added for `DfyExplore` / `DfyFoundation` / `QfiExtremaActive`).
-3. **Cross-process feed:** the live runner writes **`dfy_live_snapshot.json`** (default `~/.hermes/dfy_feed/`; override with **`DFY_INTEL_SNAPSHOT_PATH`** on both sides). Hermes merges that file into `get_dfy_store()` whenever Discord or x402 serves DFY data.
+3. **Cross-process feed (co-located):** the live runner writes **`dfy_live_snapshot.json`** (default `~/.hermes/dfy_feed/`; override with **`DFY_INTEL_SNAPSHOT_PATH`** on both sides). Hermes merges that file into `get_dfy_store()` whenever Discord/x402/the `dfy_oracle` tool serves DFY data. This requires a shared filesystem — see **Independent deployment** below when Hermes runs on a separate host.
+
+### Independent deployment (Hermes on its own host)
+
+Hermes runs **independently** of the dfai traders, so neither the snapshot file nor the dfai strategy/config/report files are on its filesystem. Two transports close the gap — both keep the trading host firewall-closed (the trader only ever connects **out**, exactly like Telegram/Discord):
+
+- **Live feed → the trader PUSHES events outbound.** The dfai side forwards trade events + indicator/RL digests via outbound `POST` (it never accepts inbound connections — no `api_server` exposure on the trading host). Hermes receives them at **`POST /v1/dfy/ingest`** on the **api_server** (`gateway/platforms/api_server.py`) — the primary public HTTP surface, so a single exposed port (e.g. a Railway service) reaches it. Authenticated by a shared bearer token; folded into `get_dfy_store()` via `dfy_intel/ingest.py`:
+  - `entry_fill`/`exit_fill`/… → activity stream + server-side exit-attribution
+  - `indicator_digest` → per-pair latest indicators + signal digest (incl. the v7.05 `&-action` RL output)
+  - `open_trades` → open-positions snapshot; `whitelist`/`runner` → mechanisms
+  - Enable the receiver: set **`HERMES_INGEST_TOKEN=<shared secret>`** in the gateway process env (the route is always registered on the api_server; ingestion **fails closed** — 503 — until the token is set, and 401 on mismatch). The trader sets the matching token + `HERMES_INGEST_URL=https://<host>/v1/dfy/ingest` (or `hermes.url`/`hermes.token` in config) — see `freqtrade_mods/DEPLOY_MANIFEST.md`. (The same route is also mirrored on the optional x402_intel adapter on `:8643` for co-located deployments.)
+  - The `dfy_oracle` tool reports `live_feed` freshness (last event ts / age) so the agent can tell live data from corpus-only analysis.
+- **Static corpus → regenerable intel-pack bundle.** `scripts/build_dfy_corpus.py --dfai-root <path>` reads strategy `.py` + configs (**secrets redacted**) + reports from a dfai checkout and writes the content-hashed, provenance-stamped **`dfy_intel/corpus/dfy_corpus.json`**, committed into this repo. The oracle falls back to it when no local `DFY_ORACLE_*` paths are set, so the chat GUI gets strategy/config/report analysis with zero filesystem coupling. Re-run on each strategy version / report publication.
 
 Optional env:
 
@@ -101,14 +113,31 @@ Endpoints:
 
 Settled requests append lines to `~/.hermes/dfy_feed/virtuals_settlement_ledger.jsonl`.
 
-## `/dfy-oracle` (Discord)
+## DFY oracle — `/dfy-oracle` (Discord) **and** the `dfy_oracle` chat tool
 
-Hermes receives a single user message bundling JSON context. Configure strategy sources the oracle can read:
+Both surfaces build identical context from `dfy_intel.oracle`: live feed
+(runner meta, mechanisms incl. open trades + per-pair indicators, recent
+signals, activity) **plus** strategy source files **plus** published analytic
+reports. The Discord slash command dispatches it as a prompt to Hermes; the
+**`dfy_oracle` agent tool** returns the same structured context to the chat
+agent (web / TUI / CLI), so any chat surface gets strategy- and report-aware
+analysis. The tool is in `_HERMES_CORE_TOOLS` but gated by a `check_fn`: it only
+appears when a DFY snapshot file or any `DFY_*` env knob is present.
+
+Strategy sources:
 
 - **`DFY_ORACLE_STRATEGY_PATHS`** — comma-separated absolute paths to `.py` strategy files (e.g. your active strategy module).
 - **`DFY_ORACLE_STRATEGY_DIR`** — directory of `.py` files (first 12 alphabetically, max 8 total with paths).
 
-Role gate: **`DISCORD_DFY_ROLE_IDS`** (legacy: `DISCORD_INTEL_ROLE_IDS`).
+Published reports (markdown / LaTeX / text read directly; PDF via `pypdf`/`PyPDF2` if installed):
+
+- **`DFY_ORACLE_REPORT_PATHS`** — comma-separated absolute paths to report files (`.md`/`.tex`/`.txt`/`.pdf`).
+- **`DFY_ORACLE_REPORT_DIR`** — directory globbed recursively for report files.
+
+Tuning caps (optional): `DFY_ORACLE_MAX_STRATEGY_FILES` (8), `DFY_ORACLE_STRATEGY_TRUNC` (14000),
+`DFY_ORACLE_MAX_REPORT_FILES` (6), `DFY_ORACLE_REPORT_TRUNC` (16000).
+
+Role gate (Discord only): **`DISCORD_DFY_ROLE_IDS`** (legacy: `DISCORD_INTEL_ROLE_IDS`).
 
 ## Virtuals + Uniswap
 

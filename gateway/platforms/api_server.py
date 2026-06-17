@@ -906,6 +906,39 @@ class APIServerAdapter(BasePlatformAdapter):
             "pid": os.getpid(),
         })
 
+    async def _handle_dfy_ingest(self, request: "web.Request") -> "web.Response":
+        """POST /v1/dfy/ingest — receive trade/indicator events PUSHED by a dfai
+        trader. The trader connects OUT to Hermes (Telegram/Discord model), so no
+        inbound port is exposed on the trading host. Authenticated by the DFY
+        shared bearer token (HERMES_INGEST_TOKEN), independent of the gateway's
+        own API key, and folded into the in-process DfyIntelStore the oracle reads.
+        """
+        from dfy_intel.ingest import apply_event, ingest_token, verify_ingest_token
+
+        if not ingest_token():
+            return web.json_response(
+                {"error": "ingest disabled: set HERMES_INGEST_TOKEN"}, status=503
+            )
+        if not verify_ingest_token(request.headers.get("Authorization")):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        events = (
+            body.get("events")
+            if isinstance(body, dict) and isinstance(body.get("events"), list)
+            else [body]
+        )
+        n = 0
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            apply_event(ev.get("kind"), ev.get("data"), bot=ev.get("bot"))
+            n += 1
+        return web.json_response({"ok": True, "ingested": n})
+
     async def _handle_models(self, request: "web.Request") -> "web.Response":
         """GET /v1/models — return hermes-agent as an available model."""
         auth_err = self._check_auth(request)
@@ -3384,6 +3417,10 @@ class APIServerAdapter(BasePlatformAdapter):
             self._app.router.add_get("/v1/runs/{run_id}/events", self._handle_run_events)
             self._app.router.add_post("/v1/runs/{run_id}/approval", self._handle_run_approval)
             self._app.router.add_post("/v1/runs/{run_id}/stop", self._handle_stop_run)
+            # DFY trader → Hermes event ingest (outbound push from the trader).
+            # Lives on the public api_server surface so a single exposed port
+            # (e.g. Railway) reaches it; auth via HERMES_INGEST_TOKEN.
+            self._app.router.add_post("/v1/dfy/ingest", self._handle_dfy_ingest)
             # Start background sweep to clean up orphaned (unconsumed) run streams
             sweep_task = asyncio.create_task(self._sweep_orphaned_runs())
             try:

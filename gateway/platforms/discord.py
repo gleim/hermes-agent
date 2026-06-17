@@ -2523,31 +2523,11 @@ class DiscordAdapter(BasePlatformAdapter):
         await interaction.followup.send(f"```json\n{text}\n```", ephemeral=True)
 
     def _dfy_oracle_collect_strategy_sources(self) -> List[Dict[str, Any]]:
-        from pathlib import Path
+        # Delegates to the shared collector (dfy_intel.oracle) so the Discord
+        # slash command and the chat-GUI ``dfy_oracle`` tool stay in lockstep.
+        from dfy_intel.oracle import collect_strategy_sources
 
-        paths: List[str] = []
-        for entry in (os.getenv("DFY_ORACLE_STRATEGY_PATHS", "") or "").split(","):
-            p = entry.strip()
-            if p:
-                paths.append(p)
-        strategy_dir = (os.getenv("DFY_ORACLE_STRATEGY_DIR", "") or "").strip()
-        if strategy_dir:
-            d = Path(strategy_dir)
-            if d.is_dir():
-                paths.extend(str(x) for x in sorted(d.glob("*.py"))[:12])
-        out: List[Dict[str, Any]] = []
-        for raw in paths[:8]:
-            path = Path(raw).expanduser()
-            try:
-                if not path.is_file():
-                    continue
-                text = path.read_text(encoding="utf-8", errors="replace")
-                if len(text) > 14000:
-                    text = text[:14000] + "\n# ... truncated ...\n"
-                out.append({"path": str(path.resolve()), "source": text})
-            except OSError:
-                continue
-        return out
+        return collect_strategy_sources()
 
     async def _run_dfy_mechanisms_slash(self, interaction: discord.Interaction) -> None:
         if not self._is_allowed_user(str(interaction.user.id)):
@@ -2605,35 +2585,13 @@ class DiscordAdapter(BasePlatformAdapter):
             )
             return
         await interaction.response.defer(ephemeral=True)
-        from dfy_intel.store import get_dfy_store
+        from dfy_intel.oracle import build_oracle_instructions, build_oracle_payload
 
-        store = get_dfy_store()
-        sources = self._dfy_oracle_collect_strategy_sources()
-        payload = {
-            "role": "dfy_strategy_oracle",
-            "focus": (focus or "").strip(),
-            "strategy_sources": sources,
-            "signals_recent": store.get_signals(limit=40),
-            "mechanisms": store.get_mechanisms(),
-            "activity_recent": store.get_activity(limit=25),
-        }
-        instructions = f"""[DFY Strategy Oracle — internal analysis]
-
-You are the **DFY strategy oracle** for this trading stack. You understand strategy implementation internals: indicator pipelines, entry/exit columns, tunable parameters, risk (ROI/stoploss), and how live indicator snapshots relate to recent signals.
-
-User focus (optional): {(focus or "").strip()!r}
-
-Use the JSON block below (strategy source files, live DFY mechanisms including open trades and per-pair indicators, recent signals, activity). Give **intelligent, specific** insight:
-1. What the active logic is doing vs. the code (entries/exits, thresholds).
-2. How the **latest signals** line up with that logic; call out divergences or confirmation.
-3. Risks, anomalies, or data gaps.
-4. 2–4 concrete checks the operator could run next.
-
-Be concise but technical; cite indicator/signal keys from the data when possible.
-
---- DFY_CONTEXT_JSON ---
-{_json.dumps(payload, indent=2, default=str)[:24000]}
---- END ---"""
+        payload = build_oracle_payload(focus=focus or "")
+        instructions = build_oracle_instructions(
+            focus or "",
+            _json.dumps(payload, indent=2, default=str)[:24000],
+        )
         event = self._build_slash_event(interaction, instructions)
         await self.handle_message(event)
         try:
