@@ -168,6 +168,43 @@ class X402IntelAdapter(BasePlatformAdapter):
             lambda: {"items": get_dfy_store().get_activity(limit=limit)},
         )
 
+    async def _handle_ingest_status(self, request: "web.Request") -> "web.Response":
+        """Return a diagnostic snapshot of DfyIntelStore for verifying event ingestion.
+
+        Requires the same HERMES_INGEST_TOKEN bearer credential as the ingest
+        endpoint but does NOT require an x402 payment — it is an operator-only
+        debug surface, not a paid data feed.
+        """
+        from dfy_intel.ingest import feed_freshness, ingest_token, verify_ingest_token
+        from dfy_intel.store import get_dfy_store
+
+        if not ingest_token():
+            return web.json_response(
+                {"error": "ingest disabled: set HERMES_INGEST_TOKEN"}, status=503
+            )
+        if not verify_ingest_token(request.headers.get("Authorization")):
+            return web.json_response({"error": "unauthorized"}, status=401)
+
+        store = get_dfy_store()
+        freshness = feed_freshness()
+
+        mechanisms = store.get_mechanisms()
+        signals = store.get_signals()
+        activity = store.get_activity()
+
+        return web.json_response(
+            {
+                "freshness": freshness,
+                "store": {
+                    "mechanisms_keys": sorted(mechanisms.keys()),
+                    "signal_count": len(signals),
+                    "activity_count": len(activity),
+                    "recent_signals": signals[-5:],
+                    "recent_activity": activity[-5:],
+                },
+            }
+        )
+
     async def _handle_ingest(self, request: "web.Request") -> "web.Response":
         """Receive a trade/indicator event PUSHED by a dfai trader (outbound from
         the trader's side — firewall-safe). Bearer-token authenticated."""
@@ -206,6 +243,7 @@ class X402IntelAdapter(BasePlatformAdapter):
             self._app.router.add_get("/v1/dfy/signals", self._handle_signals)
             self._app.router.add_get("/v1/dfy/activity", self._handle_activity)
             self._app.router.add_post("/v1/dfy/ingest", self._handle_ingest)
+            self._app.router.add_get("/v1/dfy/ingest/status", self._handle_ingest_status)
 
             self._runner = web.AppRunner(self._app)
             await self._runner.setup()
