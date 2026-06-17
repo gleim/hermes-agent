@@ -115,6 +115,13 @@ def apply_event(kind: str, data: Any, *, bot: Optional[str] = None, store=None) 
             logger.debug("dfy ingest: unknown kind %s", kind)
             return
         _mark(kind, bot)
+        ts_val = (data or {}).get("ts") if isinstance(data, dict) else None
+        logger.info(
+            "dfy ingest folded: kind=%s bot=%s ts=%s",
+            kind,
+            bot or "unknown",
+            ts_val or _last_event_at.get("ts"),
+        )
     except Exception as exc:
         logger.debug("dfy ingest apply %s: %s", kind, exc)
 
