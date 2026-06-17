@@ -122,6 +122,12 @@ def apply_event(kind: str, data: Any, *, bot: Optional[str] = None, store=None) 
             bot or "unknown",
             ts_val or _last_event_at.get("ts"),
         )
+        # Broadcast to any connected SSE subscribers (non-blocking, best-effort).
+        try:
+            from dfy_intel import broadcaster
+            broadcaster.publish(kind, bot, data)
+        except Exception:
+            pass
     except Exception as exc:
         logger.debug("dfy ingest apply %s: %s", kind, exc)
 

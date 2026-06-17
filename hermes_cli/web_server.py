@@ -119,6 +119,10 @@ _PUBLIC_API_PATHS: frozenset = frozenset({
     "/api/dashboard/themes",
     "/api/dashboard/plugins",
     "/api/dashboard/plugins/rescan",
+    # DFY events SSE stream: auth is handled inside the endpoint itself
+    # (accepts ?token= query param for EventSource connections that can't
+    # set custom headers).
+    "/api/dfy/events",
 })
 
 
@@ -3484,6 +3488,93 @@ async def events_ws(ws: WebSocket) -> None:
 
                 if not subs:
                     _event_channels.pop(channel, None)
+
+
+# ---------------------------------------------------------------------------
+# /api/dfy/events — SSE proxy for the DFY ingest event stream.
+#
+# The x402 intel gateway (gateway/platforms/x402_intel.py) exposes a
+# GET /v1/dfy/events SSE endpoint on its own port (default 8643).  This
+# proxy endpoint lets the dashboard frontend subscribe to that stream
+# through the same origin as the rest of the dashboard API, avoiding
+# cross-origin issues and keeping the HERMES_INGEST_TOKEN out of the
+# browser.  Auth is the dashboard session token (same as all /api/ routes).
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/dfy/events")
+async def dfy_events_proxy(request: Request):
+    """Proxy the x402 intel SSE stream to the dashboard frontend.
+
+    Connects to the local x402 intel server's /v1/dfy/events endpoint and
+    streams its Server-Sent Events to the browser.  The HERMES_INGEST_TOKEN
+    is injected server-side so it never reaches the browser.
+
+    Auth: the dashboard session token must be supplied either as the
+    ``X-Hermes-Session-Token`` header, ``Authorization: Bearer <token>``
+    header, or ``?token=<token>`` query parameter (browsers can't set
+    custom headers on EventSource connections).
+    """
+    from fastapi.responses import StreamingResponse
+
+    # Accept token via query param for EventSource (browsers can't set headers).
+    token_from_qs = request.query_params.get("token", "")
+    if token_from_qs and hmac.compare_digest(
+        token_from_qs.encode(), _SESSION_TOKEN.encode()
+    ):
+        pass  # valid
+    elif not _has_valid_session_token(request):
+        async def _unauth():
+            yield "data: {\"error\": \"unauthorized\"}\n\n"
+        return StreamingResponse(
+            _unauth(),
+            status_code=401,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    ingest_token = (os.getenv("HERMES_INGEST_TOKEN") or "").strip()
+    if not ingest_token:
+        async def _no_token():
+            yield "data: {\"error\": \"ingest disabled: HERMES_INGEST_TOKEN not set\"}\n\n"
+        return StreamingResponse(
+            _no_token(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # Resolve the x402 intel server address from env / defaults.
+    x402_host = os.getenv("X402_INTEL_HOST", "127.0.0.1")
+    x402_port = int(os.getenv("X402_INTEL_PORT", "8643"))
+    upstream_url = f"http://{x402_host}:{x402_port}/v1/dfy/events"
+
+    async def _stream():
+        import urllib.request as _urllib_req
+        import urllib.error as _urllib_err
+
+        req = _urllib_req.Request(
+            upstream_url,
+            headers={"Authorization": f"Bearer {ingest_token}"},
+        )
+        try:
+            with _urllib_req.urlopen(req, timeout=None) as resp:
+                while True:
+                    line = await asyncio.get_event_loop().run_in_executor(
+                        None, resp.readline
+                    )
+                    if not line:
+                        break
+                    yield line
+        except _urllib_err.URLError as exc:
+            yield f"data: {{\"error\": \"upstream unavailable: {exc.reason}\"}}\n\n".encode()
+        except Exception as exc:
+            yield f"data: {{\"error\": \"{exc}\"}}\n\n".encode()
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _normalise_prefix(raw: Optional[str]) -> str:
