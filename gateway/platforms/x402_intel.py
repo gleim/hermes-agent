@@ -30,7 +30,7 @@ DEFAULT_PORT = 8643
 
 _CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Intel-Payment-MAC, X-Payment-Response",
 }
 
@@ -168,6 +168,32 @@ class X402IntelAdapter(BasePlatformAdapter):
             lambda: {"items": get_dfy_store().get_activity(limit=limit)},
         )
 
+    async def _handle_ingest(self, request: "web.Request") -> "web.Response":
+        """Receive a trade/indicator event PUSHED by a dfai trader (outbound from
+        the trader's side — firewall-safe). Bearer-token authenticated."""
+        from dfy_intel.ingest import apply_event, ingest_token, verify_ingest_token
+
+        if not ingest_token():
+            return web.json_response(
+                {"error": "ingest disabled: set HERMES_INGEST_TOKEN"}, status=503
+            )
+        if not verify_ingest_token(request.headers.get("Authorization")):
+            return web.json_response({"error": "unauthorized"}, status=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        # Accept a single event or a batch list under "events".
+        events = body.get("events") if isinstance(body, dict) and isinstance(body.get("events"), list) else [body]
+        n = 0
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            apply_event(ev.get("kind"), ev.get("data"), bot=ev.get("bot"))
+            n += 1
+        return web.json_response({"ok": True, "ingested": n})
+
     async def connect(self) -> bool:
         if not AIOHTTP_AVAILABLE:
             logger.warning("[%s] aiohttp not installed", self.name)
@@ -179,6 +205,7 @@ class X402IntelAdapter(BasePlatformAdapter):
             self._app.router.add_get("/v1/dfy/mechanisms", self._handle_mechanisms)
             self._app.router.add_get("/v1/dfy/signals", self._handle_signals)
             self._app.router.add_get("/v1/dfy/activity", self._handle_activity)
+            self._app.router.add_post("/v1/dfy/ingest", self._handle_ingest)
 
             self._runner = web.AppRunner(self._app)
             await self._runner.setup()

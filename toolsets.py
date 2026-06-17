@@ -70,6 +70,10 @@ _HERMES_CORE_TOOLS = [
     "kanban_unblock",
     # Computer use (macOS, gated on cua-driver being installed via check_fn)
     "computer_use",
+    # DFY trading oracle — live trader feed + strategy sources + published
+    # reports. Gated via check_fn (only present when a DFY snapshot/env exists),
+    # so it stays hidden on non-DFY deployments.
+    "dfy_oracle",
 ]
 
 
@@ -256,6 +260,18 @@ TOOLSETS = {
     "discord_admin": {
         "description": "Discord server management (list channels/roles, pin messages, assign roles)",
         "tools": ["discord_admin"],
+        "includes": [],
+    },
+
+    "dfy": {
+        "description": (
+            "DFY trading oracle: inspect the live trading bot's strategy "
+            "internals, published analytic reports, and real-time feed (open "
+            "trades, per-pair indicators, recent signals, realized exits + "
+            "attribution). Gated on a DFY snapshot/env being present. Configure "
+            "sources via DFY_ORACLE_STRATEGY_PATHS/DIR and DFY_ORACLE_REPORT_PATHS/DIR."
+        ),
+        "tools": ["dfy_oracle"],
         "includes": [],
     },
 
