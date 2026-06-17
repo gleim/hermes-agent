@@ -939,6 +939,52 @@ class APIServerAdapter(BasePlatformAdapter):
             n += 1
         return web.json_response({"ok": True, "ingested": n})
 
+    async def _handle_dfy_mechanisms(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/mechanisms — live runner meta, open trades, indicators, attribution."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        from dfy_intel.store import get_dfy_store
+
+        return web.json_response(get_dfy_store().get_mechanisms())
+
+    async def _handle_dfy_signals(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/signals — recent indicator / signal digests."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        from dfy_intel.store import get_dfy_store
+
+        try:
+            limit = int(request.query.get("limit", "50"))
+        except ValueError:
+            limit = 50
+        limit = max(1, min(limit, 200))
+        return web.json_response({"items": get_dfy_store().get_signals(limit=limit)})
+
+    async def _handle_dfy_activity(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/activity — recent trade / lifecycle events for the chat GUI."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        from dfy_intel.store import get_dfy_store
+
+        try:
+            limit = int(request.query.get("limit", "50"))
+        except ValueError:
+            limit = 50
+        limit = max(1, min(limit, 200))
+        return web.json_response({"items": get_dfy_store().get_activity(limit=limit)})
+
+    async def _handle_dfy_freshness(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/freshness — last ingested event ts (live vs corpus-only)."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        from dfy_intel.ingest import feed_freshness
+
+        return web.json_response(feed_freshness())
+
     async def _handle_models(self, request: "web.Request") -> "web.Response":
         """GET /v1/models — return hermes-agent as an available model."""
         auth_err = self._check_auth(request)
@@ -3421,6 +3467,11 @@ class APIServerAdapter(BasePlatformAdapter):
             # Lives on the public api_server surface so a single exposed port
             # (e.g. Railway) reaches it; auth via HERMES_INGEST_TOKEN.
             self._app.router.add_post("/v1/dfy/ingest", self._handle_dfy_ingest)
+            # DFY feed read surface for chat.datadefi.ai (same store the oracle reads).
+            self._app.router.add_get("/v1/dfy/mechanisms", self._handle_dfy_mechanisms)
+            self._app.router.add_get("/v1/dfy/signals", self._handle_dfy_signals)
+            self._app.router.add_get("/v1/dfy/activity", self._handle_dfy_activity)
+            self._app.router.add_get("/v1/dfy/freshness", self._handle_dfy_freshness)
             # Start background sweep to clean up orphaned (unconsumed) run streams
             sweep_task = asyncio.create_task(self._sweep_orphaned_runs())
             try:
