@@ -29,10 +29,11 @@ import { Card } from "@/components/ui/card";
 
 import { ModelPickerDialog } from "@/components/ModelPickerDialog";
 import { ToolCall, type ToolEntry } from "@/components/ToolCall";
+import { DfyEventItem, type DfyEvent } from "@/components/DfyEventItem";
 import { GatewayClient, type ConnectionState } from "@/lib/gatewayClient";
 
 import { cn } from "@/lib/utils";
-import { AlertCircle, ChevronDown, RefreshCw } from "lucide-react";
+import { AlertCircle, ChevronDown, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 interface SessionInfo {
@@ -48,6 +49,7 @@ interface RpcEnvelope {
 }
 
 const TOOL_LIMIT = 20;
+const DFY_EVENT_LIMIT = 20;
 
 const STATE_LABEL: Record<ConnectionState, string> = {
   idle: "idle",
@@ -88,6 +90,8 @@ export function ChatSidebar({ channel, className }: ChatSidebarProps) {
   const [tools, setTools] = useState<ToolEntry[]>([]);
   const [modelOpen, setModelOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dfyEvents, setDfyEvents] = useState<DfyEvent[]>([]);
+  const [dfyError, setDfyError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -272,6 +276,72 @@ export function ChatSidebar({ channel, className }: ChatSidebarProps) {
     };
   }, [channel, version]);
 
+  // DFY Events SSE subscriber — connects to /api/dfy/events and streams
+  // real-time ingest events into the sidebar panel.  Uses EventSource so
+  // the browser handles reconnection automatically.  The session token is
+  // passed as a query param because EventSource doesn't support headers.
+  useEffect(() => {
+    const token = window.__HERMES_SESSION_TOKEN__;
+    if (!token) return;
+
+    let evtSource: EventSource | null = null;
+    let unmounting = false;
+
+    const url = `/api/dfy/events?token=${encodeURIComponent(token)}`;
+    evtSource = new EventSource(url);
+
+    evtSource.addEventListener("error", () => {
+      if (!unmounting) {
+        setDfyError("DFY events feed disconnected — retrying…");
+      }
+    });
+
+    evtSource.addEventListener("open", () => {
+      if (!unmounting) {
+        setDfyError(null);
+      }
+    });
+
+    evtSource.addEventListener("message", (ev) => {
+      let parsed: { kind?: string; bot?: string; ts?: string; data?: Record<string, unknown>; error?: string };
+      try {
+        parsed = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+
+      if (parsed.error) {
+        if (!unmounting) setDfyError(parsed.error);
+        return;
+      }
+
+      if (!parsed.kind) return;
+
+      const entry: DfyEvent = {
+        id: `dfy-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        kind: parsed.kind,
+        bot: parsed.bot ?? "unknown",
+        ts: parsed.ts ?? new Date().toISOString(),
+        data: parsed.data ?? {},
+        receivedAt: Date.now(),
+      };
+
+      setDfyEvents((prev) =>
+        [...prev, entry].slice(-DFY_EVENT_LIMIT),
+      );
+    });
+
+    return () => {
+      unmounting = true;
+      evtSource?.close();
+    };
+  }, [version]);
+
+  const clearDfyEvents = useCallback(() => {
+    setDfyEvents([]);
+    setDfyError(null);
+  }, []);
+
   const reconnect = useCallback(() => {
     setError(null);
     setTools([]);
@@ -367,6 +437,44 @@ export function ChatSidebar({ channel, className }: ChatSidebarProps) {
             </div>
           ) : (
             tools.map((t) => <ToolCall key={t.id} tool={t} />)
+          )}
+        </div>
+      </Card>
+
+      <Card className="flex min-h-0 flex-none flex-col px-2 py-2">
+        <div className="flex items-center justify-between px-1 pb-2">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">
+            dfy events
+          </div>
+          {dfyEvents.length > 0 && (
+            <Button
+              ghost
+              size="sm"
+              onClick={clearDfyEvents}
+              className="h-5 px-1 py-0 text-[0.6rem] text-muted-foreground/60 hover:text-muted-foreground normal-case tracking-normal"
+              title="Clear DFY events"
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          )}
+        </div>
+
+        {dfyError && (
+          <div className="mb-1.5 flex items-start gap-1.5 rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-xs">
+            <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-destructive" />
+            <span className="text-destructive/90 text-[0.65rem]">{dfyError}</span>
+          </div>
+        )}
+
+        <div className="flex min-h-0 flex-col gap-1">
+          {dfyEvents.length === 0 ? (
+            <div className="px-2 py-4 text-center text-xs text-muted-foreground">
+              no dfy events yet
+            </div>
+          ) : (
+            [...dfyEvents].reverse().map((ev) => (
+              <DfyEventItem key={ev.id} event={ev} />
+            ))
           )}
         </div>
       </Card>
