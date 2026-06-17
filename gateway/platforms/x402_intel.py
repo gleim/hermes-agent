@@ -9,6 +9,7 @@ Enable with X402_INTEL_ENABLED=true (or gateway config). Requires aiohttp.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any, Dict, Optional
@@ -168,6 +169,113 @@ class X402IntelAdapter(BasePlatformAdapter):
             lambda: {"items": get_dfy_store().get_activity(limit=limit)},
         )
 
+    async def _handle_ingest_status(self, request: "web.Request") -> "web.Response":
+        """Return a diagnostic snapshot of DfyIntelStore for verifying event ingestion.
+
+        Requires the same HERMES_INGEST_TOKEN bearer credential as the ingest
+        endpoint but does NOT require an x402 payment — it is an operator-only
+        debug surface, not a paid data feed.
+        """
+        from dfy_intel.ingest import feed_freshness, ingest_token, verify_ingest_token
+        from dfy_intel.store import get_dfy_store
+
+        if not ingest_token():
+            return web.json_response(
+                {"error": "ingest disabled: set HERMES_INGEST_TOKEN"}, status=503
+            )
+        if not verify_ingest_token(request.headers.get("Authorization")):
+            return web.json_response({"error": "unauthorized"}, status=401)
+
+        store = get_dfy_store()
+        freshness = feed_freshness()
+
+        mechanisms = store.get_mechanisms()
+        signals = store.get_signals()
+        activity = store.get_activity()
+
+        return web.json_response(
+            {
+                "freshness": freshness,
+                "store": {
+                    "mechanisms_keys": sorted(mechanisms.keys()),
+                    "signal_count": len(signals),
+                    "activity_count": len(activity),
+                    "recent_signals": signals[-5:],
+                    "recent_activity": activity[-5:],
+                },
+            }
+        )
+
+    async def _handle_dfy_events(self, request: "web.Request") -> "web.StreamResponse":
+        """Server-Sent Events stream of DFY ingest events.
+
+        Requires the same HERMES_INGEST_TOKEN bearer credential as the ingest
+        endpoint.  Each successfully folded event is broadcast to all connected
+        subscribers in real-time.  A heartbeat comment is sent every 30 seconds
+        to keep proxies and browsers from closing idle connections.
+        """
+        from dfy_intel.ingest import ingest_token, verify_ingest_token
+        from dfy_intel import broadcaster
+
+        if not ingest_token():
+            return web.Response(
+                status=503,
+                text="data: {\"error\": \"ingest disabled: set HERMES_INGEST_TOKEN\"}\n\n",
+                content_type="text/event-stream",
+            )
+        if not verify_ingest_token(request.headers.get("Authorization")):
+            return web.Response(
+                status=401,
+                text="data: {\"error\": \"unauthorized\"}\n\n",
+                content_type="text/event-stream",
+            )
+
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                **_CORS_HEADERS,
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await response.prepare(request)
+
+        # Send an initial connection-established comment so the client knows
+        # the stream is live before the first real event arrives.
+        await response.write(b": connected\n\n")
+
+        _HEARTBEAT_INTERVAL = 30.0
+
+        with broadcaster.subscribe() as q:
+            loop = asyncio.get_event_loop()
+            while True:
+                try:
+                    # Poll the queue with a timeout so we can send heartbeats.
+                    item = await loop.run_in_executor(
+                        None,
+                        lambda: q.get(timeout=_HEARTBEAT_INTERVAL),
+                    )
+                except Exception:
+                    # Timeout — send a heartbeat comment to keep the connection alive.
+                    try:
+                        await response.write(b": heartbeat\n\n")
+                    except Exception:
+                        break
+                    continue
+
+                if item is broadcaster.STOP:
+                    break
+
+                try:
+                    line = f"data: {item}\n\n".encode()
+                    await response.write(line)
+                except Exception:
+                    # Client disconnected.
+                    break
+
+        return response
+
     async def _handle_ingest(self, request: "web.Request") -> "web.Response":
         """Receive a trade/indicator event PUSHED by a dfai trader (outbound from
         the trader's side — firewall-safe). Bearer-token authenticated."""
@@ -206,6 +314,8 @@ class X402IntelAdapter(BasePlatformAdapter):
             self._app.router.add_get("/v1/dfy/signals", self._handle_signals)
             self._app.router.add_get("/v1/dfy/activity", self._handle_activity)
             self._app.router.add_post("/v1/dfy/ingest", self._handle_ingest)
+            self._app.router.add_get("/v1/dfy/ingest/status", self._handle_ingest_status)
+            self._app.router.add_get("/v1/dfy/events", self._handle_dfy_events)
 
             self._runner = web.AppRunner(self._app)
             await self._runner.setup()
