@@ -80,8 +80,14 @@ modal = ["modal==1.3.4"]
 daytona = ["daytona==0.155.0"]
 vercel = ["vercel==0.5.7"]
 hindsight = ["hindsight-client==0.6.1"]
+# DFY trader-analysis stack (live trade feed store/ingest, posture-only guidance
+# projection, journal, oracle). First-party, local source — see [tool.uv.sources].
+# Optional: the oracle tool + x402_intel/api_server/discord glue all import
+# dfy_intel lazily, so when the extra is absent those features self-disable.
+# Lives in the separate dfy-trader-intel repo (kept apart from the genomic stack).
+dfy = ["dfy-intel==0.1.0"]
 dev = ["debugpy==1.8.20", "pytest==9.0.2", "pytest-asyncio==1.3.0", "pytest-xdist==3.8.0", "pytest-split==0.11.0", "mcp==1.26.0", "ty==0.0.21", "ruff==0.15.10"]
-messaging = ["python-telegram-bot[webhooks]==22.6", "discord.py[voice]==2.7.1", "aiohttp==3.13.3", "brotlicffi==1.2.0.1", "slack-bolt==1.27.0", "slack-sdk==3.40.1", "qrcode==7.4.2"]
+messaging =["python-telegram-bot[webhooks]==22.6", "discord.py[voice]==2.7.1", "aiohttp==3.13.3", "brotlicffi==1.2.0.1", "slack-bolt==1.27.0", "slack-sdk==3.40.1", "qrcode==7.4.2"]
 cron = []  # croniter is now a core dependency; this extra kept for back-compat
 slack = ["slack-bolt==1.27.0", "slack-sdk==3.40.1", "aiohttp==3.13.3"]
 matrix = ["mautrix[encryption]==0.21.0", "Markdown==3.10.2", "aiosqlite==0.22.1", "asyncpg==0.31.0", "aiohttp-socks==0.11.0"]
@@ -215,7 +221,15 @@ gateway = ["assets/**/*"]
 acp_adapter = ["bootstrap/*.sh", "bootstrap/*.ps1"]
 
 [tool.setuptools.packages.find]
-include = ["agent", "agent.*", "tools", "tools.*", "hermes_cli", "gateway", "gateway.*", "tui_gateway", "tui_gateway.*", "cron", "acp_adapter", "acp_adapter.*", "plugins", "plugins.*", "providers", "providers.*", "dfy_intel"]
+include = ["agent", "agent.*", "tools", "tools.*", "hermes_cli", "gateway", "gateway.*", "tui_gateway", "tui_gateway.*", "cron", "acp_adapter", "acp_adapter.*", "plugins", "plugins.*", "providers", "providers.*"]
+
+# DFY trader-analysis core, kept in the separate dfy-trader-intel repo so it is
+# not vendored into this tree. Installed via the `dfy` extra above. Pinned by tag
+# for reproducible Docker/Railway builds (matches this repo's exact-pin posture).
+# Local dev override: after `uv sync --extra dfy`, shadow with the working tree via
+#   uv pip install -e ../dfy-trader-intel/packages/dfy_intel
+[tool.uv.sources]
+dfy-intel = { git = "https://github.com/gleim/dfy-trader-intel.git", tag = "v0.1.0", subdirectory = "packages/dfy_intel" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

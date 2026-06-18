@@ -206,6 +206,26 @@ class X402IntelAdapter(BasePlatformAdapter):
             }
         )
 
+    async def _handle_snapshot(self, request: "web.Request") -> "web.Response":
+        """Full store snapshot for INTERNAL consumers (the standalone guidance
+        gateway hydrating over the private network). Bearer-gated with the same
+        HERMES_INGEST_TOKEN as ingest — NOT an x402 paid surface, and never
+        exposed publicly. Returns the raw store (mechanisms/signals/activity); the
+        guidance gateway is responsible for the posture-only projection before any
+        public 402 route serves it.
+        """
+        from dfy_intel.ingest import ingest_token, verify_ingest_token
+        from dfy_intel.store import get_dfy_store
+
+        if not ingest_token():
+            return web.json_response(
+                {"error": "snapshot disabled: set HERMES_INGEST_TOKEN"}, status=503
+            )
+        if not verify_ingest_token(request.headers.get("Authorization")):
+            return web.json_response({"error": "unauthorized"}, status=401)
+
+        return web.json_response(get_dfy_store().snapshot())
+
     async def _handle_dfy_events(self, request: "web.Request") -> "web.StreamResponse":
         """Server-Sent Events stream of DFY ingest events.
 
@@ -315,6 +335,7 @@ class X402IntelAdapter(BasePlatformAdapter):
             self._app.router.add_get("/v1/dfy/activity", self._handle_activity)
             self._app.router.add_post("/v1/dfy/ingest", self._handle_ingest)
             self._app.router.add_get("/v1/dfy/ingest/status", self._handle_ingest_status)
+            self._app.router.add_get("/v1/dfy/snapshot", self._handle_snapshot)
             self._app.router.add_get("/v1/dfy/events", self._handle_dfy_events)
 
             self._runner = web.AppRunner(self._app)

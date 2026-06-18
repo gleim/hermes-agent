@@ -154,7 +154,7 @@ def main() -> int:
     ap.add_argument("--config", action="append", default=[], help="Config .json (repeatable, rel to root).")
     ap.add_argument("--report", action="append", default=[], help="Report file (repeatable, rel to root).")
     ap.add_argument("--report-dir", action="append", default=[], help="Report dir (repeatable, rel to root).")
-    ap.add_argument("--out", default=None, help="Output bundle path (default: dfy_intel/corpus/dfy_corpus.json).")
+    ap.add_argument("--out", default=None, help="Output bundle path (default: the installed dfy_intel package's corpus/dfy_corpus.json).")
     ap.add_argument("--strategy-trunc", type=int, default=20000)
     ap.add_argument("--report-trunc", type=int, default=24000)
     ap.add_argument("--max-reports", type=int, default=10)
@@ -170,9 +170,14 @@ def main() -> int:
     report_files = args.report or []
     report_dirs = args.report_dir or (DEFAULT_REPORT_DIRS if not report_files else [])
 
-    out_path = Path(args.out).expanduser() if args.out else (
-        Path(__file__).resolve().parent.parent / "dfy_intel" / "corpus" / "dfy_corpus.json"
-    )
+    if args.out:
+        out_path = Path(args.out).expanduser()
+    else:
+        # dfy_intel now lives in the separate dfy-trader-intel package; write the
+        # corpus into the installed package's corpus dir (editable install points
+        # back to that repo's source).
+        import dfy_intel
+        out_path = Path(dfy_intel.__file__).resolve().parent / "corpus" / "dfy_corpus.json"
 
     print(f"Building DFY corpus from {root}")
     bundle = {
