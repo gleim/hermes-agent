@@ -82,6 +82,13 @@ class X402IntelAdapter(BasePlatformAdapter):
         resource_path: str,
         build_body: Any,
     ) -> "web.Response":
+        from gateway.dfy_access import DfyIntelUnavailable, dfy_unavailable_json, ensure_dfy_intel
+
+        try:
+            ensure_dfy_intel()
+        except DfyIntelUnavailable:
+            body, status = dfy_unavailable_json()
+            return web.json_response(body, status=status)
         from dfy_intel import virtuals_bridge
         from dfy_intel.x402_payment import (
             build_payment_required_payload,

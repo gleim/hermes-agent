@@ -1120,6 +1120,11 @@ wheels = [
 ]
 
 [[package]]
+name = "dfy-intel"
+version = "0.1.1"
+source = { git = "https://github.com/gleim/dfy-trader-intel.git?subdirectory=packages%2Fdfy_intel&tag=v0.1.1#749c836608cfda72f25040cb95c4527aed923aee" }
+
+[[package]]
 name = "dingtalk-stream"
 version = "0.24.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1598,6 +1603,7 @@ all = [
     { name = "agent-client-protocol" },
     { name = "aiohttp" },
     { name = "debugpy" },
+    { name = "dfy-intel" },
     { name = "fastapi" },
     { name = "google-api-python-client" },
     { name = "google-auth-httplib2" },
@@ -1639,6 +1645,9 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "ty" },
+]
+dfy = [
+    { name = "dfy-intel" },
 ]
 dingtalk = [
     { name = "alibabacloud-dingtalk" },
@@ -1772,6 +1781,7 @@ requires-dist = [
     { name = "croniter", specifier = "==6.0.0" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = "==0.155.0" },
     { name = "debugpy", marker = "extra == 'dev'", specifier = "==1.8.20" },
+    { name = "dfy-intel", marker = "extra == 'dfy'", git = "https://github.com/gleim/dfy-trader-intel.git?subdirectory=packages%2Fdfy_intel&tag=v0.1.1" },
     { name = "dingtalk-stream", marker = "extra == 'dingtalk'", specifier = "==0.24.3" },
     { name = "discord-py", extras = ["voice"], marker = "extra == 'messaging'", specifier = "==2.7.1" },
     { name = "edge-tts", marker = "extra == 'edge-tts'", specifier = "==7.2.7" },
@@ -1792,6 +1802,7 @@ requires-dist = [
     { name = "hermes-agent", extras = ["cron"], marker = "extra == 'all'" },
     { name = "hermes-agent", extras = ["cron"], marker = "extra == 'termux'" },
     { name = "hermes-agent", extras = ["dev"], marker = "extra == 'all'" },
+    { name = "hermes-agent", extras = ["dfy"], marker = "extra == 'all'" },
     { name = "hermes-agent", extras = ["google"], marker = "extra == 'all'" },
     { name = "hermes-agent", extras = ["google"], marker = "extra == 'termux-all'" },
     { name = "hermes-agent", extras = ["homeassistant"], marker = "extra == 'all'" },
@@ -1855,7 +1866,7 @@ requires-dist = [
     { name = "vercel", marker = "extra == 'vercel'", specifier = "==0.5.7" },
     { name = "youtube-transcript-api", marker = "extra == 'youtube'", specifier = "==1.2.4" },
 ]
-provides-extras = ["anthropic", "exa", "firecrawl", "parallel-web", "fal", "edge-tts", "modal", "daytona", "vercel", "hindsight", "dev", "messaging", "cron", "slack", "matrix", "cli", "tts-premium", "voice", "pty", "honcho", "mcp", "homeassistant", "sms", "computer-use", "acp", "bedrock", "termux", "termux-all", "dingtalk", "feishu", "google", "youtube", "web", "all"]
+provides-extras = ["anthropic", "exa", "firecrawl", "parallel-web", "fal", "edge-tts", "modal", "daytona", "vercel", "hindsight", "dfy", "dev", "messaging", "cron", "slack", "matrix", "cli", "tts-premium", "voice", "pty", "honcho", "mcp", "homeassistant", "sms", "computer-use", "acp", "bedrock", "termux", "termux-all", "dingtalk", "feishu", "google", "youtube", "web", "all"]
 
 [[package]]
 name = "hf-xet"

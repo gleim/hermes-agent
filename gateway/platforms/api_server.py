@@ -913,6 +913,13 @@ class APIServerAdapter(BasePlatformAdapter):
         shared bearer token (HERMES_INGEST_TOKEN), independent of the gateway's
         own API key, and folded into the in-process DfyIntelStore the oracle reads.
         """
+        from gateway.dfy_access import DfyIntelUnavailable, dfy_unavailable_json, ensure_dfy_intel
+
+        try:
+            ensure_dfy_intel()
+        except DfyIntelUnavailable:
+            body, status = dfy_unavailable_json()
+            return web.json_response(body, status=status)
         from dfy_intel.ingest import apply_event, ingest_token, verify_ingest_token
 
         if not ingest_token():
@@ -944,6 +951,13 @@ class APIServerAdapter(BasePlatformAdapter):
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
+        from gateway.dfy_access import DfyIntelUnavailable, dfy_unavailable_json, ensure_dfy_intel
+
+        try:
+            ensure_dfy_intel()
+        except DfyIntelUnavailable:
+            body, status = dfy_unavailable_json()
+            return web.json_response(body, status=status)
         from gateway.dfy_access import oracle_tier_c_allowed
         from dfy_intel.store import get_dfy_store
 
@@ -964,6 +978,13 @@ class APIServerAdapter(BasePlatformAdapter):
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
+        from gateway.dfy_access import DfyIntelUnavailable, dfy_unavailable_json, ensure_dfy_intel
+
+        try:
+            ensure_dfy_intel()
+        except DfyIntelUnavailable:
+            body, status = dfy_unavailable_json()
+            return web.json_response(body, status=status)
         from gateway.dfy_access import oracle_tier_c_allowed
         from dfy_intel.store import get_dfy_store
 
@@ -989,6 +1010,13 @@ class APIServerAdapter(BasePlatformAdapter):
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
+        from gateway.dfy_access import DfyIntelUnavailable, dfy_unavailable_json, ensure_dfy_intel
+
+        try:
+            ensure_dfy_intel()
+        except DfyIntelUnavailable:
+            body, status = dfy_unavailable_json()
+            return web.json_response(body, status=status)
         from gateway.dfy_access import oracle_tier_c_allowed
         from dfy_intel.store import get_dfy_store
 

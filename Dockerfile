@@ -77,14 +77,9 @@ RUN npm install --prefer-offline --no-audit && \
 # frontend stats the readme path during dep resolution, so we `touch` an
 # empty placeholder — the real README is restored by `COPY . .` below.
 #
-# `uv sync --frozen --no-install-project --extra all` installs only the
-# deps reachable through the composite `[all]` extra (handpicked set
-# intended for the production image).  We do NOT use `--all-extras`:
-# that would pull in `[rl]` (atroposlib + tinker + torch + wandb from
-# git), `[yc-bench]` (another git dep), and `[termux-all]` (Android
-# redundancy), none of which belong in the published container.
-#
-# The editable link is created after the source copy below.
+# `uv sync --frozen --no-install-project --extra all` installs the production
+# dep set, including the private `dfy-intel` git package (MutantDeFi trader
+# stack). Docker/Railway builds need git credentials for github.com/gleim/dfy-trader-intel.
 COPY pyproject.toml uv.lock ./
 RUN touch ./README.md
 RUN uv sync --frozen --no-install-project --extra all
