@@ -73,7 +73,7 @@ Hermes runs **independently** of the dfai traders, so neither the snapshot file 
   - `open_trades` → open-positions snapshot; `whitelist`/`runner` → mechanisms
   - Enable the receiver: set **`HERMES_INGEST_TOKEN=<shared secret>`** in the gateway process env (the route is always registered on the api_server; ingestion **fails closed** — 503 — until the token is set, and 401 on mismatch). The trader sets the matching token + `HERMES_INGEST_URL=https://<host>/v1/dfy/ingest` (or `hermes.url`/`hermes.token` in config) — see `freqtrade_mods/DEPLOY_MANIFEST.md`. (The same route is also mirrored on the optional x402_intel adapter on `:8643` for co-located deployments.)
   - The `dfy_oracle` tool reports `live_feed` freshness (last event ts / age) so the agent can tell live data from corpus-only analysis.
-- **Static corpus → regenerable intel-pack bundle.** `scripts/build_dfy_corpus.py --dfai-root <path>` reads strategy `.py` + configs (**secrets redacted**) + reports from a dfai checkout and writes the content-hashed, provenance-stamped **`dfy_intel/corpus/dfy_corpus.json`**, committed into this repo. The oracle falls back to it when no local `DFY_ORACLE_*` paths are set, so the chat GUI gets strategy/config/report analysis with zero filesystem coupling. Re-run on each strategy version / report publication.
+- **Static corpus → private intel-pack bundle.** `scripts/build_dfy_corpus.py --dfai-root <path> --strategy …` reads strategy `.py` + configs (**secrets redacted**) + reports from a dfai checkout and writes the content-hashed bundle into the **private** [`dfy-trader-intel`](https://github.com/gleim/dfy-trader-intel) package (`packages/dfy_intel/dfy_intel/corpus/dfy_corpus.json`). It is **never** committed to this public repo. The Tier-C oracle falls back to it when no local `DFY_ORACLE_*` paths are set. Re-run on each strategy version / report publication.
 
 Optional env:
 
@@ -104,25 +104,30 @@ export X402_INTEL_PORT=8643
 
 **Development:** `X402_SKIP_PAYMENT=true`, or `X402_RELAXED_AUTH=true` + `X402_DEV_SHARED_SECRET` / `X-Intel-Payment-MAC`.
 
-Endpoints:
+Endpoints (all **posture-only** Tier A — no raw indicator digests or strategy source):
 
 - `GET /health`
-- `GET /v1/dfy/mechanisms`
-- `GET /v1/dfy/signals?limit=50`
-- `GET /v1/dfy/activity?limit=50`
+- `GET /v1/dfy/regime`, `/v1/dfy/posture`, `/v1/dfy/attribution`, `/v1/dfy/brief`, `/v1/dfy/desk`, `/v1/dfy/guidance/crypto`
+- Legacy aliases (same posture-only payloads, include a `deprecated` note): `/v1/dfy/mechanisms`, `/v1/dfy/signals`, `/v1/dfy/activity`
+
+Public paid guidance also ships from the standalone `guidance-gateway` service in `dfy-trader-intel` (`guidance.mutantdefi.com`).
 
 Settled requests append lines to `~/.hermes/dfy_feed/virtuals_settlement_ledger.jsonl`.
 
 ## DFY oracle — `/dfy-oracle` (Discord) **and** the `dfy_oracle` chat tool
 
-Both surfaces build identical context from `dfy_intel.oracle`: live feed
+**Tier-C, operator-only.** Both surfaces require `DFY_ORACLE_ENABLED=true` **and**
+`HERMES_INGEST_TOKEN` on the gateway. The vendored corpus alone does not enable
+them — posture-only x402/api_server read routes never expose strategy source.
+
+Both build identical context from `dfy_intel.oracle`: live feed
 (runner meta, mechanisms incl. open trades + per-pair indicators, recent
 signals, activity) **plus** strategy source files **plus** published analytic
 reports. The Discord slash command dispatches it as a prompt to Hermes; the
 **`dfy_oracle` agent tool** returns the same structured context to the chat
 agent (web / TUI / CLI), so any chat surface gets strategy- and report-aware
 analysis. The tool is in `_HERMES_CORE_TOOLS` but gated by a `check_fn`: it only
-appears when a DFY snapshot file or any `DFY_*` env knob is present.
+appears when Tier-C oracle is explicitly enabled **and** a corpus/feed/source is present.
 
 Strategy sources:
 

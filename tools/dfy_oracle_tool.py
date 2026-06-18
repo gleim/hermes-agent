@@ -33,13 +33,15 @@ def _snapshot_path() -> Path:
 
 
 def check_dfy_oracle_requirements() -> bool:
-    """Available when a DFY corpus, feed, or source/transport env is configured.
+    """Available only when Tier-C oracle is explicitly enabled and bearer-configured.
 
-    On an independent Hermes deployment the vendored corpus bundle alone is
-    enough — the oracle can analyze strategy/config/reports even before any live
-    feed is wired. Live transport (snapshot file or websocket producers) and the
-    co-located env paths each also enable it.
+    The vendored corpus alone does NOT enable this tool — posture-only surfaces
+    (x402 / api_server read routes) never expose strategy source or raw digests.
     """
+    from gateway.dfy_access import oracle_tier_c_allowed
+
+    if not oracle_tier_c_allowed():
+        return False
     if any(
         (os.getenv(k) or "").strip()
         for k in (
@@ -49,7 +51,6 @@ def check_dfy_oracle_requirements() -> bool:
             "DFY_ORACLE_REPORT_PATHS",
             "DFY_ORACLE_REPORT_DIR",
             "DFY_ORACLE_CONFIG_PATHS",
-            "HERMES_INGEST_TOKEN",
         )
     ):
         return True
@@ -184,7 +185,7 @@ registry.register(
     schema=DFY_ORACLE_SCHEMA,
     handler=dfy_oracle_tool,
     check_fn=check_dfy_oracle_requirements,
-    requires_env=["HERMES_INGEST_TOKEN"],
+    requires_env=["DFY_ORACLE_ENABLED", "HERMES_INGEST_TOKEN"],
     description="Live DFY trading feed + strategy sources + published reports for analysis.",
     emoji="📈",
     max_result_size_chars=200000,

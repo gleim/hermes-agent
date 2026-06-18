@@ -940,41 +940,74 @@ class APIServerAdapter(BasePlatformAdapter):
         return web.json_response({"ok": True, "ingested": n})
 
     async def _handle_dfy_mechanisms(self, request: "web.Request") -> "web.Response":
-        """GET /v1/dfy/mechanisms — live runner meta, open trades, indicators, attribution."""
+        """GET /v1/dfy/mechanisms — posture-only read (Tier A). Raw store requires Tier-C oracle."""
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
+        from gateway.dfy_access import oracle_tier_c_allowed
         from dfy_intel.store import get_dfy_store
 
-        return web.json_response(get_dfy_store().get_mechanisms())
+        store = get_dfy_store()
+        if oracle_tier_c_allowed():
+            return web.json_response(store.get_mechanisms())
+        from dfy_intel.guidance_projection import posture_view
+
+        return web.json_response(
+            {
+                **posture_view(store),
+                "note": "Posture-only. Set DFY_ORACLE_ENABLED=true + HERMES_INGEST_TOKEN for raw Tier-C.",
+            }
+        )
 
     async def _handle_dfy_signals(self, request: "web.Request") -> "web.Response":
-        """GET /v1/dfy/signals — recent indicator / signal digests."""
+        """GET /v1/dfy/signals — posture-only regime read unless Tier-C oracle is enabled."""
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
+        from gateway.dfy_access import oracle_tier_c_allowed
         from dfy_intel.store import get_dfy_store
 
-        try:
-            limit = int(request.query.get("limit", "50"))
-        except ValueError:
-            limit = 50
-        limit = max(1, min(limit, 200))
-        return web.json_response({"items": get_dfy_store().get_signals(limit=limit)})
+        store = get_dfy_store()
+        if oracle_tier_c_allowed():
+            try:
+                limit = int(request.query.get("limit", "50"))
+            except ValueError:
+                limit = 50
+            limit = max(1, min(limit, 200))
+            return web.json_response({"items": store.get_signals(limit=limit)})
+        from dfy_intel.guidance_projection import regime_view
+
+        return web.json_response(
+            {
+                **regime_view(store),
+                "note": "Posture-only. Set DFY_ORACLE_ENABLED=true + HERMES_INGEST_TOKEN for raw Tier-C.",
+            }
+        )
 
     async def _handle_dfy_activity(self, request: "web.Request") -> "web.Response":
-        """GET /v1/dfy/activity — recent trade / lifecycle events for the chat GUI."""
+        """GET /v1/dfy/activity — posture-only brief unless Tier-C oracle is enabled."""
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
+        from gateway.dfy_access import oracle_tier_c_allowed
         from dfy_intel.store import get_dfy_store
 
-        try:
-            limit = int(request.query.get("limit", "50"))
-        except ValueError:
-            limit = 50
-        limit = max(1, min(limit, 200))
-        return web.json_response({"items": get_dfy_store().get_activity(limit=limit)})
+        store = get_dfy_store()
+        if oracle_tier_c_allowed():
+            try:
+                limit = int(request.query.get("limit", "50"))
+            except ValueError:
+                limit = 50
+            limit = max(1, min(limit, 200))
+            return web.json_response({"items": store.get_activity(limit=limit)})
+        from dfy_intel.guidance_projection import brief_view
+
+        return web.json_response(
+            {
+                **brief_view(store),
+                "note": "Posture-only. Set DFY_ORACLE_ENABLED=true + HERMES_INGEST_TOKEN for raw Tier-C.",
+            }
+        )
 
     async def _handle_dfy_freshness(self, request: "web.Request") -> "web.Response":
         """GET /v1/dfy/freshness — last ingested event ts (live vs corpus-only)."""

@@ -1,8 +1,11 @@
 """
 x402 microtransaction HTTP gateway for the DFY feed.
 
-Serves strategy mechanisms, signals, and activity as JSON. When payment is
-required, responds with HTTP 402 and an x402-shaped challenge body.
+Serves **posture-only** Tier-A guidance (``guidance_projection``) — never raw
+store rows, indicator digests, or strategy source. When payment is required,
+responds with HTTP 402 and an x402-shaped challenge body.
+
+Raw snapshot / ingest / events stay bearer-gated for internal hydration only.
 
 Enable with X402_INTEL_ENABLED=true (or gateway config). Requires aiohttp.
 """
@@ -130,43 +133,112 @@ class X402IntelAdapter(BasePlatformAdapter):
     async def _handle_health(self, request: "web.Request") -> "web.Response":
         return web.json_response({"status": "ok", "service": "hermes-x402-dfy"})
 
-    async def _handle_mechanisms(self, request: "web.Request") -> "web.Response":
+    def _posture_store(self):
         from dfy_intel.store import get_dfy_store
 
+        return get_dfy_store()
+
+    async def _handle_regime(self, request: "web.Request") -> "web.Response":
+        from dfy_intel.guidance_projection import regime_view
+
+        store = self._posture_store()
+        symbol = (request.query.get("symbol") or "").strip() or None
+        return await self._gate_or_serve(
+            request,
+            "/v1/dfy/regime",
+            lambda: regime_view(store, symbol=symbol),
+        )
+
+    async def _handle_posture(self, request: "web.Request") -> "web.Response":
+        from dfy_intel.guidance_projection import posture_view
+
+        store = self._posture_store()
+        return await self._gate_or_serve(
+            request,
+            "/v1/dfy/posture",
+            lambda: posture_view(store),
+        )
+
+    async def _handle_attribution(self, request: "web.Request") -> "web.Response":
+        from dfy_intel.guidance_projection import attribution_view
+
+        store = self._posture_store()
+        return await self._gate_or_serve(
+            request,
+            "/v1/dfy/attribution",
+            lambda: attribution_view(store),
+        )
+
+    async def _handle_brief(self, request: "web.Request") -> "web.Response":
+        from dfy_intel.guidance_projection import brief_view
+
+        store = self._posture_store()
+        return await self._gate_or_serve(
+            request,
+            "/v1/dfy/brief",
+            lambda: brief_view(store),
+        )
+
+    async def _handle_desk(self, request: "web.Request") -> "web.Response":
+        from dfy_intel.guidance_projection import desk_view
+
+        store = self._posture_store()
+        symbol = (request.query.get("symbol") or "BTC").strip()
+        return await self._gate_or_serve(
+            request,
+            "/v1/dfy/desk",
+            lambda: desk_view(store, symbol),
+        )
+
+    async def _handle_crypto_guidance(self, request: "web.Request") -> "web.Response":
+        from dfy_intel.guidance_projection import crypto_guidance
+
+        store = self._posture_store()
+        symbol = (request.query.get("symbol") or "BTC").strip()
+        return await self._gate_or_serve(
+            request,
+            "/v1/dfy/guidance/crypto",
+            lambda: crypto_guidance(store, symbol),
+        )
+
+    # Legacy paths — posture-only aliases (raw mechanisms/signals/activity removed).
+    async def _handle_mechanisms(self, request: "web.Request") -> "web.Response":
+        from dfy_intel.guidance_projection import posture_view
+
+        store = self._posture_store()
         return await self._gate_or_serve(
             request,
             "/v1/dfy/mechanisms",
-            get_dfy_store().get_mechanisms,
+            lambda: {
+                **posture_view(store),
+                "deprecated": "Use /v1/dfy/posture — this path no longer returns raw mechanisms.",
+            },
         )
 
     async def _handle_signals(self, request: "web.Request") -> "web.Response":
-        from dfy_intel.store import get_dfy_store
+        from dfy_intel.guidance_projection import regime_view
 
-        try:
-            limit = int(request.query.get("limit", "50"))
-        except ValueError:
-            limit = 50
-        limit = max(1, min(limit, 200))
-
+        store = self._posture_store()
         return await self._gate_or_serve(
             request,
             "/v1/dfy/signals",
-            lambda: {"items": get_dfy_store().get_signals(limit=limit)},
+            lambda: {
+                **regime_view(store),
+                "deprecated": "Use /v1/dfy/regime — this path no longer returns raw signal digests.",
+            },
         )
 
     async def _handle_activity(self, request: "web.Request") -> "web.Response":
-        from dfy_intel.store import get_dfy_store
+        from dfy_intel.guidance_projection import brief_view
 
-        try:
-            limit = int(request.query.get("limit", "50"))
-        except ValueError:
-            limit = 50
-        limit = max(1, min(limit, 200))
-
+        store = self._posture_store()
         return await self._gate_or_serve(
             request,
             "/v1/dfy/activity",
-            lambda: {"items": get_dfy_store().get_activity(limit=limit)},
+            lambda: {
+                **brief_view(store),
+                "deprecated": "Use /v1/dfy/brief — this path no longer returns raw activity rows.",
+            },
         )
 
     async def _handle_ingest_status(self, request: "web.Request") -> "web.Response":
@@ -330,6 +402,13 @@ class X402IntelAdapter(BasePlatformAdapter):
         try:
             self._app = web.Application(middlewares=[_cors])
             self._app.router.add_get("/health", self._handle_health)
+            self._app.router.add_get("/v1/dfy/regime", self._handle_regime)
+            self._app.router.add_get("/v1/dfy/posture", self._handle_posture)
+            self._app.router.add_get("/v1/dfy/attribution", self._handle_attribution)
+            self._app.router.add_get("/v1/dfy/brief", self._handle_brief)
+            self._app.router.add_get("/v1/dfy/desk", self._handle_desk)
+            self._app.router.add_get("/v1/dfy/guidance/crypto", self._handle_crypto_guidance)
+            # Legacy aliases (posture-only; see handler docstrings).
             self._app.router.add_get("/v1/dfy/mechanisms", self._handle_mechanisms)
             self._app.router.add_get("/v1/dfy/signals", self._handle_signals)
             self._app.router.add_get("/v1/dfy/activity", self._handle_activity)

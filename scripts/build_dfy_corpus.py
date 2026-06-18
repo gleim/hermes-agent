@@ -4,22 +4,20 @@
 Hermes is deployed independently of the dfai live traders, so it cannot read the
 trader's strategy/config/report files off the local filesystem. This script runs
 against a dfai checkout, reads the relevant artifacts, **redacts secrets from
-configs**, and emits one content-hashed JSON bundle that is committed into the
-Hermes repo (``dfy_intel/corpus/dfy_corpus.json``). The oracle falls back to that
-bundle when no local env paths are configured (see ``dfy_intel.corpus_bundle``).
+configs**, and emits one content-hashed JSON bundle into the **private**
+``dfy-trader-intel`` package (``packages/dfy_intel/dfy_intel/corpus/dfy_corpus.json``).
+The Tier-C oracle falls back to that bundle when no local ``DFY_ORACLE_*`` env paths
+are configured — it is never committed to the public ``hermes-agent`` repo.
 
-Re-run this on every strategy version / report publication to refresh the bundle;
+Re-run on every strategy version / report publication to refresh the bundle;
 drift is then visible in a single diff instead of hiding across scattered copies.
 
-Usage:
-    python scripts/build_dfy_corpus.py --dfai-root /path/to/dfai
-    python scripts/build_dfy_corpus.py --dfai-root ../dfai \
-        --strategy user_data/versions/v7.03/strategy/MacroSurf_v7_05.py \
-        --config user_data/versions/v7.05/config/config_v7_05_crypto_rl.json \
-        --report-dir reports/publications/2026-v7-04-crypto-omega
-
-Defaults target v7.05 (the current live arm) when no --strategy/--config/--report*
-flags are given.
+Usage (all artifact paths are explicit — no baked-in strategy names):
+    pip install -e ../dfy-trader-intel/packages/dfy_intel
+    python scripts/build_dfy_corpus.py --dfai-root /path/to/dfai \\
+        --strategy user_data/versions/.../strategy/MyStrategy.py \\
+        --config user_data/versions/.../config/my_config.json \\
+        --report-dir reports/publications/my-report-dir
 """
 
 from __future__ import annotations
@@ -41,19 +39,6 @@ from dfy_intel.corpus_bundle import strip_jsonc as _strip_jsonc  # noqa: E402
 
 SCHEMA = "dfy_corpus/v1"
 
-# v7.05 defaults (paths relative to --dfai-root).
-DEFAULT_STRATEGIES = [
-    "user_data/versions/v7.03/strategy/MacroSurf_v7_05.py",
-    "user_data/versions/v7.03/strategy/MacroSurf_v7_03.py",
-    "user_data/freqaimodels/MutantSurfRL_v7_05.py",
-]
-DEFAULT_CONFIGS = [
-    "user_data/versions/v7.05/config/config_v7_05_crypto_rl.json",
-]
-DEFAULT_REPORT_DIRS = [
-    "reports/publications/2026-v7-04-crypto-omega",
-    "reports/publications/2026-v7-03-omega-macro",
-]
 REPORT_EXTS = (".md", ".markdown", ".tex", ".txt")
 
 
@@ -165,17 +150,18 @@ def main() -> int:
         print(f"error: --dfai-root not a directory: {root}", file=sys.stderr)
         return 2
 
-    strategies = args.strategy or DEFAULT_STRATEGIES
-    configs = args.config or DEFAULT_CONFIGS
-    report_files = args.report or []
-    report_dirs = args.report_dir or (DEFAULT_REPORT_DIRS if not report_files else [])
+    strategies = args.strategy
+    configs = args.config
+    report_files = args.report
+    report_dirs = args.report_dir
+
+    if not strategies:
+        print("error: pass at least one --strategy (no defaults — secret-safety)", file=sys.stderr)
+        return 2
 
     if args.out:
         out_path = Path(args.out).expanduser()
     else:
-        # dfy_intel now lives in the separate dfy-trader-intel package; write the
-        # corpus into the installed package's corpus dir (editable install points
-        # back to that repo's source).
         import dfy_intel
         out_path = Path(dfy_intel.__file__).resolve().parent / "corpus" / "dfy_corpus.json"
 
@@ -183,9 +169,9 @@ def main() -> int:
     bundle = {
         "schema": SCHEMA,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source": {"repo": "dfai", "root": str(root), "commit": _git_commit(root)},
+        "source": {"repo": "dfai", "root": "(redacted)", "commit": _git_commit(root)},
         "strategy_sources": collect_strategies(root, strategies, args.strategy_trunc),
-        "configs": collect_configs(root, configs),
+        "configs": collect_configs(root, configs) if configs else [],
         "reports": collect_reports(root, report_files, report_dirs, args.max_reports, args.report_trunc),
     }
     payload = json.dumps(bundle, indent=2, ensure_ascii=False)

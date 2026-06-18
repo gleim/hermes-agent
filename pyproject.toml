@@ -229,7 +229,7 @@ include = ["agent", "agent.*", "tools", "tools.*", "hermes_cli", "gateway", "gat
 # Local dev override: after `uv sync --extra dfy`, shadow with the working tree via
 #   uv pip install -e ../dfy-trader-intel/packages/dfy_intel
 [tool.uv.sources]
-dfy-intel = { git = "https://github.com/gleim/dfy-trader-intel.git", tag = "v0.1.0", subdirectory = "packages/dfy_intel" }
+dfy-intel = { git = "https://github.com/gleim/dfy-trader-intel.git", tag = "v0.1.1", subdirectory = "packages/dfy_intel" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

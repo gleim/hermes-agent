@@ -2538,6 +2538,14 @@ class DiscordAdapter(BasePlatformAdapter):
                 "You need a server role allowed for DFY commands.", ephemeral=True
             )
             return
+        from gateway.dfy_access import oracle_tier_c_allowed
+
+        if not oracle_tier_c_allowed():
+            await interaction.response.send_message(
+                "Tier-C DFY feed disabled. Set DFY_ORACLE_ENABLED=true and HERMES_INGEST_TOKEN on the gateway.",
+                ephemeral=True,
+            )
+            return
         await interaction.response.defer(ephemeral=True)
         from dfy_intel.store import get_dfy_store
 
@@ -2550,6 +2558,14 @@ class DiscordAdapter(BasePlatformAdapter):
         if not self._dfy_slash_role_ok(interaction):
             await interaction.response.send_message(
                 "You need a server role allowed for DFY commands.", ephemeral=True
+            )
+            return
+        from gateway.dfy_access import oracle_tier_c_allowed
+
+        if not oracle_tier_c_allowed():
+            await interaction.response.send_message(
+                "Tier-C DFY feed disabled. Set DFY_ORACLE_ENABLED=true and HERMES_INGEST_TOKEN on the gateway.",
+                ephemeral=True,
             )
             return
         await interaction.response.defer(ephemeral=True)
@@ -2567,6 +2583,14 @@ class DiscordAdapter(BasePlatformAdapter):
                 "You need a server role allowed for DFY commands.", ephemeral=True
             )
             return
+        from gateway.dfy_access import oracle_tier_c_allowed
+
+        if not oracle_tier_c_allowed():
+            await interaction.response.send_message(
+                "Tier-C DFY feed disabled. Set DFY_ORACLE_ENABLED=true and HERMES_INGEST_TOKEN on the gateway.",
+                ephemeral=True,
+            )
+            return
         await interaction.response.defer(ephemeral=True)
         from dfy_intel.store import get_dfy_store
 
@@ -2582,6 +2606,14 @@ class DiscordAdapter(BasePlatformAdapter):
         if not self._dfy_slash_role_ok(interaction):
             await interaction.response.send_message(
                 "You need a server role allowed for DFY commands.", ephemeral=True
+            )
+            return
+        from gateway.dfy_access import oracle_tier_c_allowed
+
+        if not oracle_tier_c_allowed():
+            await interaction.response.send_message(
+                "Tier-C oracle disabled. Set DFY_ORACLE_ENABLED=true and HERMES_INGEST_TOKEN on the gateway.",
+                ephemeral=True,
             )
             return
         await interaction.response.defer(ephemeral=True)
