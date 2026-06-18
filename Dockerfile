@@ -80,6 +80,11 @@ RUN npm install --prefer-offline --no-audit && \
 # `uv sync --frozen --no-install-project --extra all` installs the production
 # dep set, including the private `dfy-intel` git package (MutantDeFi trader
 # stack). Docker/Railway builds need git credentials for github.com/gleim/dfy-trader-intel.
+# GH_TOKEN is injected as a Railway service variable → Docker build ARG.
+ARG GH_TOKEN
+RUN if [ -n "$GH_TOKEN" ]; then \
+      git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
 COPY pyproject.toml uv.lock ./
 RUN touch ./README.md
 RUN uv sync --frozen --no-install-project --extra all
