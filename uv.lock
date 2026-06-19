@@ -1122,7 +1122,7 @@ wheels = [
 [[package]]
 name = "dfy-intel"
 version = "0.1.1"
-source = { git = "https://github.com/gleim/dfy-trader-intel.git?subdirectory=packages%2Fdfy_intel&tag=v0.1.1#749c836608cfda72f25040cb95c4527aed923aee" }
+source = { git = "https://github.com/gleim/dfy.git?subdirectory=packages%2Fdfy_intel&tag=v0.1.1#749c836608cfda72f25040cb95c4527aed923aee" }
 
 [[package]]
 name = "dingtalk-stream"
@@ -1781,7 +1781,7 @@ requires-dist = [
     { name = "croniter", specifier = "==6.0.0" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = "==0.155.0" },
     { name = "debugpy", marker = "extra == 'dev'", specifier = "==1.8.20" },
-    { name = "dfy-intel", marker = "extra == 'dfy'", git = "https://github.com/gleim/dfy-trader-intel.git?subdirectory=packages%2Fdfy_intel&tag=v0.1.1" },
+    { name = "dfy-intel", marker = "extra == 'dfy'", git = "https://github.com/gleim/dfy.git?subdirectory=packages%2Fdfy_intel&tag=v0.1.1" },
     { name = "dingtalk-stream", marker = "extra == 'dingtalk'", specifier = "==0.24.3" },
     { name = "discord-py", extras = ["voice"], marker = "extra == 'messaging'", specifier = "==2.7.1" },
     { name = "edge-tts", marker = "extra == 'edge-tts'", specifier = "==7.2.7" },
