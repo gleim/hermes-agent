@@ -26,7 +26,7 @@ export interface DfyEvent {
 // Kind → color mapping
 // ---------------------------------------------------------------------------
 
-type KindCategory = "trade" | "indicator" | "mechanism" | "error" | "other";
+type KindCategory = "trade" | "indicator" | "mechanism" | "index" | "error" | "other";
 
 const TRADE_KINDS = new Set([
   "trade_event",
@@ -49,6 +49,7 @@ function kindCategory(kind: string): KindCategory {
   if (TRADE_KINDS.has(kind)) return "trade";
   if (kind === "indicator_digest") return "indicator";
   if (MECHANISM_KINDS.has(kind)) return "mechanism";
+  if (kind === "index_event") return "index";
   if (kind === "error") return "error";
   return "other";
 }
@@ -60,6 +61,8 @@ const BADGE_CLASSES: Record<KindCategory, string> = {
     "bg-blue-500/15 text-blue-400 border border-blue-500/30",
   mechanism:
     "bg-yellow-500/15 text-yellow-400 border border-yellow-500/30",
+  index:
+    "bg-violet-500/15 text-violet-300 border border-violet-500/30",
   error:
     "bg-destructive/15 text-destructive border border-destructive/30",
   other:
@@ -70,6 +73,7 @@ const ROW_BORDER: Record<KindCategory, string> = {
   trade: "border-emerald-500/20",
   indicator: "border-blue-500/20",
   mechanism: "border-yellow-500/20",
+  index: "border-violet-500/20",
   error: "border-destructive/30",
   other: "border-border",
 };
@@ -101,6 +105,21 @@ function dataSummary(kind: string, data: Record<string, unknown>): string {
     if (data.profit_ratio != null)
       parts.push(`P/L ${(Number(data.profit_ratio) * 100).toFixed(2)}%`);
     if (data.enter_tag) parts.push(String(data.enter_tag));
+    return parts.join(" · ") || JSON.stringify(data).slice(0, 60);
+  }
+
+  // FCI index print: symbol · transition · signed / conf · rung
+  if (kind === "index_event") {
+    const parts: string[] = [];
+    if (data.symbol) parts.push(String(data.symbol));
+    if (data.horizon) parts.push(String(data.horizon));
+    if (data.transition) parts.push(String(data.transition));
+    if (data.signed != null) {
+      const signed = Number(data.signed);
+      parts.push(`${signed >= 0 ? "+" : ""}${signed.toFixed(3)}`);
+    }
+    if (data.conf != null) parts.push(`conf ${Number(data.conf).toFixed(2)}`);
+    if (data.rung) parts.push(String(data.rung));
     return parts.join(" · ") || JSON.stringify(data).slice(0, 60);
   }
 

@@ -2321,6 +2321,17 @@ OPTIONAL_ENV_VARS = {
         "password": False,
         "category": "messaging",
     },
+    "HERMES_INGEST_TOKEN": {
+        "description": (
+            "Shared bearer for POST /v1/dfy/ingest (trader fills + FCI index_event). "
+            "Fails closed until set. The dfy_iq watcher posts index_event here in "
+            "parallel with Discord; do not put that paragraph on datafi.live."
+        ),
+        "prompt": "Hermes DFY ingest token",
+        "url": None,
+        "password": True,
+        "category": "tool",
+    },
     "SLACK_BOT_TOKEN": {
         "description": "Slack bot token (xoxb-). Get from OAuth & Permissions after installing your app. "
                        "Required scopes: chat:write, app_mentions:read, channels:history, groups:history, "
