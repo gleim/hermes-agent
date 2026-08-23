@@ -74,6 +74,8 @@ _HERMES_CORE_TOOLS = [
     # reports. Gated via check_fn (only present when a DFY snapshot/env exists),
     # so it stays hidden on non-DFY deployments.
     "dfy_oracle",
+    # FCI index_event journal (live-print edges). Gated on HERMES_INGEST_TOKEN.
+    "dfy_index_events",
 ]
 
 
@@ -268,10 +270,11 @@ TOOLSETS = {
             "DFY trading oracle: inspect the live trading bot's strategy "
             "internals, published analytic reports, and real-time feed (open "
             "trades, per-pair indicators, recent signals, realized exits + "
-            "attribution). Gated on a DFY snapshot/env being present. Configure "
+            "attribution). Also cites FCI index_event prints (not trader posture). "
+            "Gated on a DFY snapshot/env being present. Configure "
             "sources via DFY_ORACLE_STRATEGY_PATHS/DIR and DFY_ORACLE_REPORT_PATHS/DIR."
         ),
-        "tools": ["dfy_oracle"],
+        "tools": ["dfy_oracle", "dfy_index_events"],
         "includes": [],
     },
 

@@ -907,44 +907,131 @@ class APIServerAdapter(BasePlatformAdapter):
         })
 
     async def _handle_dfy_ingest(self, request: "web.Request") -> "web.Response":
-        """POST /v1/dfy/ingest — receive trade/indicator events PUSHED by a dfai
-        trader. The trader connects OUT to Hermes (Telegram/Discord model), so no
-        inbound port is exposed on the trading host. Authenticated by the DFY
-        shared bearer token (HERMES_INGEST_TOKEN), independent of the gateway's
-        own API key, and folded into the in-process DfyIntelStore the oracle reads.
+        """POST /v1/dfy/ingest — receive events PUSHED outbound to Hermes.
+
+        Authenticated by ``HERMES_INGEST_TOKEN``. Trader kinds
+        (``entry_fill``, ``indicator_digest``, …) fold into ``dfy_intel``.
+        ``index_event`` is a parallel stream labeled ``index`` — not posture —
+        and does not require the dfy extra.
         """
-        from gateway.dfy_access import DfyIntelUnavailable, dfy_unavailable_json, ensure_dfy_intel
+        from gateway.dfy_ingest import fold_ingest_events, ingest_auth_error
 
-        try:
-            ensure_dfy_intel()
-        except DfyIntelUnavailable:
-            body, status = dfy_unavailable_json()
+        auth = ingest_auth_error(request.headers.get("Authorization"))
+        if auth:
+            body, status = auth
             return web.json_response(body, status=status)
-        from dfy_intel.ingest import apply_event, ingest_token, verify_ingest_token
-
-        if not ingest_token():
-            return web.json_response(
-                {"error": "ingest disabled: set HERMES_INGEST_TOKEN"}, status=503
-            )
-        if not verify_ingest_token(request.headers.get("Authorization")):
-            return web.json_response({"error": "unauthorized"}, status=401)
         try:
             body = await request.json()
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
 
-        events = (
-            body.get("events")
-            if isinstance(body, dict) and isinstance(body.get("events"), list)
-            else [body]
+        result = fold_ingest_events(body)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def _handle_dfy_index_events(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/index-events — recent FCI index prints (internal, not x402)."""
+        from gateway.dfy_index_events import citation_payload
+        from gateway.dfy_ingest import ingest_auth_error
+
+        auth = ingest_auth_error(request.headers.get("Authorization"))
+        if auth:
+            body, status = auth
+            return web.json_response(body, status=status)
+        try:
+            limit = int(request.query.get("limit", "25"))
+        except ValueError:
+            limit = 25
+        return web.json_response(citation_payload(limit=limit))
+
+    async def _handle_dfy_events(self, request: "web.Request") -> "web.StreamResponse":
+        """SSE of DFY ingest events, including ``index_event``.
+
+        Bearer-gated with ``HERMES_INGEST_TOKEN``. Multiplexes the Hermes
+        index journal with ``dfy_intel.broadcaster`` when the extra is
+        installed so the dashboard does not depend on x402 being up.
+        """
+        from gateway.dfy_index_events import subscribe as index_subscribe
+        from gateway.dfy_index_events import unsubscribe as index_unsubscribe
+        from gateway.dfy_ingest import ingest_auth_error
+
+        auth = ingest_auth_error(request.headers.get("Authorization"))
+        if auth:
+            body, status = auth
+            return web.json_response(body, status=status)
+
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
         )
-        n = 0
-        for ev in events:
-            if not isinstance(ev, dict):
-                continue
-            apply_event(ev.get("kind"), ev.get("data"), bot=ev.get("bot"))
-            n += 1
-        return web.json_response({"ok": True, "ingested": n})
+        await response.prepare(request)
+        await response.write(b": connected\n\n")
+
+        index_q = index_subscribe()
+        intel_cm = None
+        intel_q = None
+        intel_stop = object()
+        try:
+            from dfy_intel import broadcaster
+
+            intel_cm = broadcaster.subscribe()
+            intel_q = intel_cm.__enter__()
+            intel_stop = getattr(broadcaster, "STOP", intel_stop)
+        except Exception:
+            intel_cm = None
+            intel_q = None
+
+        _HEARTBEAT_INTERVAL = 30.0
+        loop = asyncio.get_event_loop()
+
+        def _poll():
+            try:
+                return "index", index_q.get(timeout=0.25)
+            except Exception:
+                pass
+            if intel_q is not None:
+                try:
+                    item = intel_q.get(timeout=0.25)
+                    return "intel", item
+                except Exception:
+                    pass
+            return None, None
+
+        try:
+            idle = 0.0
+            while True:
+                source, item = await loop.run_in_executor(None, _poll)
+                if item is None:
+                    idle += 0.5
+                    if idle >= _HEARTBEAT_INTERVAL:
+                        try:
+                            await response.write(b": heartbeat\n\n")
+                        except Exception:
+                            break
+                        idle = 0.0
+                    continue
+                idle = 0.0
+                if source == "intel" and item is intel_stop:
+                    break
+                try:
+                    line = item if isinstance(item, (bytes, bytearray)) else f"data: {item}\n\n".encode()
+                    if isinstance(item, str) and not item.startswith("data:"):
+                        line = f"data: {item}\n\n".encode()
+                    await response.write(line)
+                except Exception:
+                    break
+        finally:
+            index_unsubscribe(index_q)
+            if intel_cm is not None:
+                try:
+                    intel_cm.__exit__(None, None, None)
+                except Exception:
+                    pass
+        return response
 
     async def _handle_dfy_mechanisms(self, request: "web.Request") -> "web.Response":
         """GET /v1/dfy/mechanisms — posture-only read (Tier A). Raw store requires Tier-C oracle."""
@@ -1042,9 +1129,17 @@ class APIServerAdapter(BasePlatformAdapter):
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
-        from dfy_intel.ingest import feed_freshness
+        from gateway.dfy_index_events import index_event_freshness
 
-        return web.json_response(feed_freshness())
+        payload: Dict[str, Any] = {}
+        try:
+            from dfy_intel.ingest import feed_freshness
+
+            payload.update(feed_freshness())
+        except Exception as exc:
+            payload["trader_feed"] = {"error": f"{type(exc).__name__}: {exc}"}
+        payload["index_events"] = index_event_freshness()
+        return web.json_response(payload)
 
     async def _handle_models(self, request: "web.Request") -> "web.Response":
         """GET /v1/models — return hermes-agent as an available model."""
@@ -3528,7 +3623,10 @@ class APIServerAdapter(BasePlatformAdapter):
             # Lives on the public api_server surface so a single exposed port
             # (e.g. Railway) reaches it; auth via HERMES_INGEST_TOKEN.
             self._app.router.add_post("/v1/dfy/ingest", self._handle_dfy_ingest)
+            self._app.router.add_get("/v1/dfy/index-events", self._handle_dfy_index_events)
+            self._app.router.add_get("/v1/dfy/events", self._handle_dfy_events)
             # DFY feed read surface for chat.datadefi.ai (same store the oracle reads).
+            # index_event is NOT on this public posture surface — internal only.
             self._app.router.add_get("/v1/dfy/mechanisms", self._handle_dfy_mechanisms)
             self._app.router.add_get("/v1/dfy/signals", self._handle_dfy_signals)
             self._app.router.add_get("/v1/dfy/activity", self._handle_dfy_activity)

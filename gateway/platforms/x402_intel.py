@@ -272,9 +272,15 @@ class X402IntelAdapter(BasePlatformAdapter):
         signals = store.get_signals()
         activity = store.get_activity()
 
+        from gateway.dfy_index_events import index_event_freshness, list_index_events
+
         return web.json_response(
             {
                 "freshness": freshness,
+                "index_events": {
+                    "freshness": index_event_freshness(),
+                    "recent": list_index_events(limit=5),
+                },
                 "store": {
                     "mechanisms_keys": sorted(mechanisms.keys()),
                     "signal_count": len(signals),
@@ -313,19 +319,18 @@ class X402IntelAdapter(BasePlatformAdapter):
         subscribers in real-time.  A heartbeat comment is sent every 30 seconds
         to keep proxies and browsers from closing idle connections.
         """
-        from dfy_intel.ingest import ingest_token, verify_ingest_token
-        from dfy_intel import broadcaster
+        import json as _json
 
-        if not ingest_token():
+        from gateway.dfy_index_events import subscribe as index_subscribe
+        from gateway.dfy_index_events import unsubscribe as index_unsubscribe
+        from gateway.dfy_ingest import ingest_auth_error
+
+        auth = ingest_auth_error(request.headers.get("Authorization"))
+        if auth:
+            body, status = auth
             return web.Response(
-                status=503,
-                text="data: {\"error\": \"ingest disabled: set HERMES_INGEST_TOKEN\"}\n\n",
-                content_type="text/event-stream",
-            )
-        if not verify_ingest_token(request.headers.get("Authorization")):
-            return web.Response(
-                status=401,
-                text="data: {\"error\": \"unauthorized\"}\n\n",
+                status=status,
+                text=f"data: {_json.dumps(body)}\n\n",
                 content_type="text/event-stream",
             )
 
@@ -346,60 +351,103 @@ class X402IntelAdapter(BasePlatformAdapter):
 
         _HEARTBEAT_INTERVAL = 30.0
 
-        with broadcaster.subscribe() as q:
-            loop = asyncio.get_event_loop()
+        index_q = index_subscribe()
+        intel_cm = None
+        intel_q = None
+        intel_stop = object()
+        try:
+            from dfy_intel import broadcaster
+
+            intel_cm = broadcaster.subscribe()
+            intel_q = intel_cm.__enter__()
+            intel_stop = getattr(broadcaster, "STOP", intel_stop)
+        except Exception:
+            intel_cm = None
+            intel_q = None
+
+        loop = asyncio.get_event_loop()
+
+        def _poll():
+            try:
+                return index_q.get(timeout=0.25)
+            except Exception:
+                pass
+            if intel_q is not None:
+                try:
+                    return intel_q.get(timeout=0.25)
+                except Exception:
+                    return None
+            return None
+
+        try:
+            idle = 0.0
             while True:
                 try:
-                    # Poll the queue with a timeout so we can send heartbeats.
-                    item = await loop.run_in_executor(
-                        None,
-                        lambda: q.get(timeout=_HEARTBEAT_INTERVAL),
-                    )
+                    item = await loop.run_in_executor(None, _poll)
                 except Exception:
-                    # Timeout — send a heartbeat comment to keep the connection alive.
-                    try:
-                        await response.write(b": heartbeat\n\n")
-                    except Exception:
-                        break
+                    item = None
+                if item is None:
+                    idle += 0.5
+                    if idle >= _HEARTBEAT_INTERVAL:
+                        try:
+                            await response.write(b": heartbeat\n\n")
+                        except Exception:
+                            break
+                        idle = 0.0
                     continue
-
-                if item is broadcaster.STOP:
+                idle = 0.0
+                if item is intel_stop:
                     break
-
                 try:
-                    line = f"data: {item}\n\n".encode()
-                    await response.write(line)
+                    payload = item if isinstance(item, str) else str(item)
+                    await response.write(f"data: {payload}\n\n".encode())
                 except Exception:
-                    # Client disconnected.
                     break
+        finally:
+            index_unsubscribe(index_q)
+            if intel_cm is not None:
+                try:
+                    intel_cm.__exit__(None, None, None)
+                except Exception:
+                    pass
 
         return response
 
     async def _handle_ingest(self, request: "web.Request") -> "web.Response":
-        """Receive a trade/indicator event PUSHED by a dfai trader (outbound from
-        the trader's side — firewall-safe). Bearer-token authenticated."""
-        from dfy_intel.ingest import apply_event, ingest_token, verify_ingest_token
+        """Receive events PUSHED outbound to Hermes. Bearer-token authenticated.
 
-        if not ingest_token():
-            return web.json_response(
-                {"error": "ingest disabled: set HERMES_INGEST_TOKEN"}, status=503
-            )
-        if not verify_ingest_token(request.headers.get("Authorization")):
-            return web.json_response({"error": "unauthorized"}, status=401)
+        ``index_event`` is stored as stream=index and never folded into
+        posture / brief / desk. Other kinds go through dfy_intel.
+        """
+        from gateway.dfy_ingest import fold_ingest_events, ingest_auth_error
+
+        auth = ingest_auth_error(request.headers.get("Authorization"))
+        if auth:
+            body, status = auth
+            return web.json_response(body, status=status)
         try:
             body = await request.json()
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
 
-        # Accept a single event or a batch list under "events".
-        events = body.get("events") if isinstance(body, dict) and isinstance(body.get("events"), list) else [body]
-        n = 0
-        for ev in events:
-            if not isinstance(ev, dict):
-                continue
-            apply_event(ev.get("kind"), ev.get("data"), bot=ev.get("bot"))
-            n += 1
-        return web.json_response({"ok": True, "ingested": n})
+        result = fold_ingest_events(body)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def _handle_index_events(self, request: "web.Request") -> "web.Response":
+        """Recent FCI index prints. Bearer-gated, never an x402 paid surface."""
+        from gateway.dfy_index_events import citation_payload
+        from gateway.dfy_ingest import ingest_auth_error
+
+        auth = ingest_auth_error(request.headers.get("Authorization"))
+        if auth:
+            body, status = auth
+            return web.json_response(body, status=status)
+        try:
+            limit = int(request.query.get("limit", "25"))
+        except ValueError:
+            limit = 25
+        return web.json_response(citation_payload(limit=limit))
 
     async def connect(self) -> bool:
         if not AIOHTTP_AVAILABLE:
@@ -422,6 +470,7 @@ class X402IntelAdapter(BasePlatformAdapter):
             self._app.router.add_post("/v1/dfy/ingest", self._handle_ingest)
             self._app.router.add_get("/v1/dfy/ingest/status", self._handle_ingest_status)
             self._app.router.add_get("/v1/dfy/snapshot", self._handle_snapshot)
+            self._app.router.add_get("/v1/dfy/index-events", self._handle_index_events)
             self._app.router.add_get("/v1/dfy/events", self._handle_dfy_events)
 
             self._runner = web.AppRunner(self._app)
