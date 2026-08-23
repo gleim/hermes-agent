@@ -80,11 +80,30 @@ if [ ! -f "$HERMES_HOME/config.yaml" ]; then
     cp "$INSTALL_DIR/cli-config.yaml.example" "$HERMES_HOME/config.yaml"
 fi
 
-# Auto-enable api_server platform when HERMES_API_SERVER_ENABLED is set.
-# This bridges Railway env vars into config.yaml so the API server adapter
-# starts and serves /health for healthchecks.
+# Detect Railway / explicit PaaS HTTP. Without this, the image defaults to
+# interactive `hermes` (no listener) and api_server binds 127.0.0.1 — both
+# produce "Application failed to respond" on every public port.
+_paas_http=false
+case "${HERMES_PAAS_HTTP:-}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON) _paas_http=true ;;
+    0|false|FALSE|False|no|NO|off|OFF) _paas_http=false ;;
+    *)
+        if [ -n "${RAILWAY_ENVIRONMENT:-}" ] || [ -n "${RAILWAY_SERVICE_NAME:-}" ] || [ -n "${RAILWAY_PROJECT_ID:-}" ]; then
+            _paas_http=true
+        fi
+        ;;
+esac
+
+# Auto-enable api_server in config.yaml when HERMES_API_SERVER_ENABLED is set
+# or when a PaaS edge (Railway) needs /health on the public port.
+_enable_api_server=false
 case "${HERMES_API_SERVER_ENABLED:-}" in
-    1|true|TRUE|True|yes|YES|Yes)
+    1|true|TRUE|True|yes|YES|Yes) _enable_api_server=true ;;
+esac
+if [ "$_paas_http" = true ]; then
+    _enable_api_server=true
+fi
+if [ "$_enable_api_server" = true ]; then
         if command -v python3 >/dev/null 2>&1; then
             python3 -c "
 import yaml, sys
@@ -103,8 +122,7 @@ except Exception as e:
     print(f'Warning: could not auto-enable api_server: {e}', file=sys.stderr)
 "
         fi
-        ;;
-esac
+fi
 
 # SOUL.md
 if [ ! -f "$HERMES_HOME/SOUL.md" ]; then
@@ -125,9 +143,16 @@ if [ ! -f "$HERMES_HOME/auth.json" ] && [ -n "$HERMES_AUTH_JSON_BOOTSTRAP" ]; th
     chmod 600 "$HERMES_HOME/auth.json"
 fi
 
-# Sync bundled skills (manifest-based so user edits are preserved)
+# Sync bundled skills (manifest-based so user edits are preserved).
+# On PaaS the gateway also syncs quietly at startup — skip the verbose
+# per-skill dump so deploy logs show the HTTP bind instead of 80+ "+ name"
+# lines that look like the process never left skill install.
 if [ -d "$INSTALL_DIR/skills" ]; then
-    python3 "$INSTALL_DIR/tools/skills_sync.py"
+    if [ "$_paas_http" = true ]; then
+        echo "PaaS runtime: deferring bundled skill sync to gateway startup"
+    else
+        python3 "$INSTALL_DIR/tools/skills_sync.py"
+    fi
 fi
 
 # Optionally start `hermes dashboard` as a side-process.
@@ -173,6 +198,41 @@ if [ -n "${PORT:-}" ] && [ -z "${API_SERVER_PORT:-}" ]; then
     export API_SERVER_PORT="$PORT"
 fi
 
+# PaaS edge: enable + bind the API server so Railway/the proxy can reach it.
+# Binding 0.0.0.0 without API_SERVER_KEY is refused (gateway stays "live",
+# every public port 502s). Generate a persistent key when the operator has
+# not set one. Point the public domain at this same port (usually $PORT).
+if [ "$_paas_http" = true ]; then
+    export API_SERVER_ENABLED="${API_SERVER_ENABLED:-true}"
+    case "${API_SERVER_HOST:-}" in
+        ""|127.0.0.1|localhost|::1) export API_SERVER_HOST="0.0.0.0" ;;
+    esac
+    if [ -z "${API_SERVER_KEY:-}" ]; then
+        key_file="$HERMES_HOME/.api_server_key"
+        if [ -f "$key_file" ]; then
+            API_SERVER_KEY="$(tr -d '\n' < "$key_file")"
+            export API_SERVER_KEY
+            echo "PaaS runtime: loaded API_SERVER_KEY from $key_file"
+        else
+            API_SERVER_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+            export API_SERVER_KEY
+            umask 077
+            printf '%s' "$API_SERVER_KEY" > "$key_file"
+            echo "PaaS runtime: generated API_SERVER_KEY (persisted at $key_file)."
+            echo "Set API_SERVER_KEY in the platform env to pin the bearer token."
+        fi
+    fi
+    echo "PaaS runtime: API server will bind ${API_SERVER_HOST}:${API_SERVER_PORT:-8642}"
+    # Bare `docker run` / empty Railway start command → interactive CLI, no HTTP.
+    if [ $# -eq 0 ]; then
+        echo "PaaS runtime: no start command; launching hermes gateway"
+        set -- gateway
+    elif [ $# -eq 1 ] && [ "$1" = "hermes" ]; then
+        echo "PaaS runtime: start command is bare hermes; launching hermes gateway"
+        set -- gateway
+    fi
+fi
+
 # Final exec: two supported invocation patterns.
 #
 #   docker run <image>                 -> exec `hermes` with no args (legacy default)
@@ -185,6 +245,7 @@ fi
 # `sleep infinity` sandbox containers — see tools/environments/docker.py).
 # Otherwise we treat the args as a hermes subcommand and wrap with `hermes`,
 # preserving the documented `docker run <image> <subcommand>` behavior.
+# On PaaS, an empty command is rewritten to `gateway` above.
 if [ $# -gt 0 ] && command -v "$1" >/dev/null 2>&1; then
     exec "$@"
 fi

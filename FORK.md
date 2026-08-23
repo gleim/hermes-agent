@@ -73,6 +73,28 @@ Hermes runs **independently** of the dfai traders, so neither the snapshot file 
   - `open_trades` → open-positions snapshot; `whitelist`/`runner` → mechanisms
   - `index_event` → **index** journal (not posture). FCI live-print edges only (`cleared` / `expired` / `near_miss`). Same token, same envelope; Hermes does not fold these into desk / `brief_view` / trader activity. Writer is the dfy_iq watcher (`event_narrator`); Discord lands separately via `DISCORD_INDEX_EVENT_WEBHOOK_URL` and must not wait on this host. Cite via `dfy_index_events` or `dfy_oracle` view=`index`. Internal read: `GET /v1/dfy/index-events` (bearer, not x402 / not datafi.live).
   - Enable the receiver: set **`HERMES_INGEST_TOKEN=<shared secret>`** in the gateway process env (the route is always registered on the api_server; ingestion **fails closed** — 503 — until the token is set, and 401 on mismatch). The trader sets the matching token + `HERMES_INGEST_URL=https://<host>/v1/dfy/ingest` (or `hermes.url`/`hermes.token` in config) — see `freqtrade_mods/DEPLOY_MANIFEST.md`. (The same route is also mirrored on the optional x402_intel adapter on `:8643` for co-located deployments.)
+
+### Railway (`hermes.mutantdefi.com` vs `chat.mutantdefi.com`)
+
+Same split as DataDeFi: **`hermes.mutantdefi.com`** is this repo (gateway / `api_server`); **`chat.mutantdefi.com`** is the separate `dfy-chat` service on port 8080. Do not attach the chat domain to Hermes.
+
+The image default is interactive `hermes` (no HTTP) and `api_server` binds **`127.0.0.1`**. Either one 502s every public port. On Railway the entrypoint now:
+
+1. Starts **`hermes gateway`** when the start command is empty or bare `hermes`
+2. Sets **`API_SERVER_ENABLED=true`** and **`API_SERVER_HOST=0.0.0.0`**
+3. Maps Railway **`PORT`** → **`API_SERVER_PORT`** (point the public domain at that same port — usually 8080, not 8642/8648)
+4. Generates a persistent **`API_SERVER_KEY`** if unset (volume file `~/.hermes/.api_server_key`)
+
+Pin these on the **hermes-mutantdefi** service (copy from working `hermes-bff` if needed):
+
+```
+API_SERVER_ENABLED=true
+API_SERVER_HOST=0.0.0.0
+API_SERVER_KEY=<openssl rand -hex 32>
+HERMES_INGEST_TOKEN=<same secret the writer uses>
+```
+
+Start command: **`hermes gateway`** (or leave empty — PaaS bootstrap selects gateway). Healthy deploy logs include `API server listening on http://0.0.0.0:<PORT>` after skill sync. Escape hatch: `HERMES_PAAS_HTTP=0`.
   - The `dfy_oracle` tool reports `live_feed` freshness (last event ts / age) so the agent can tell live data from corpus-only analysis.
 - **Static corpus → private intel-pack bundle.** `scripts/build_dfy_corpus.py --dfai-root <path> --strategy …` reads strategy `.py` + configs (**secrets redacted**) + reports from a dfai checkout and writes the content-hashed bundle into the **private** [`dfy-trader-intel`](https://github.com/gleim/dfy-trader-intel) package (`packages/dfy_intel/dfy_intel/corpus/dfy_corpus.json`). It is **never** committed to this public repo. The Tier-C oracle falls back to it when no local `DFY_ORACLE_*` paths are set. Re-run on each strategy version / report publication.
 
