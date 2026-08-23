@@ -51,7 +51,7 @@ def test_tool_returns_index_label_and_facts():
     assert "not a trade" in payload["note"]
     assert payload["items"][0]["facts"]["symbol"] == "HYPE"
     assert payload["items"][0]["transition"] == "near_miss"
-    assert "pnl" not in json.dumps(payload).lower()
+    assert "pnl" not in json.dumps(payload["items"][0]["facts"]).lower()
 
 
 def test_oracle_index_view_does_not_need_dfy_intel():

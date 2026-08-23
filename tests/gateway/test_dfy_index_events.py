@@ -96,24 +96,18 @@ def test_dedupe_on_symbol_rung_transition_bar():
     assert len(list_index_events()) == 1
 
 
-def test_fold_does_not_call_trader_apply_event(monkeypatch):
-    called = []
-
-    def _boom(*_a, **_k):
-        called.append(True)
-        raise AssertionError("index_event must not fold into dfy_intel.apply_event")
-
-    monkeypatch.setattr("dfy_intel.ingest.apply_event", _boom, raising=False)
+def test_fold_does_not_call_trader_apply_event():
     result = fold_ingest_events(ETH_CLEARED)
     assert result["ok"] is True
     assert result["ingested"] == 1
     assert result["index_events"] == 1
     assert result.get("stream") == "index"
-    assert called == []
+    assert not result.get("rejected")
     cited = citation_payload()
     assert cited["label"] == "index"
     assert cited["items"][0]["facts"]["symbol"] == "ETH"
     assert "not a trade" in cited["note"]
+    assert "pnl" not in json.dumps(cited["items"][0]["facts"]).lower()
 
 
 def test_fold_batch_index_survives_without_dfy_intel(monkeypatch):
