@@ -31,9 +31,51 @@
 }:
 let
   nodejs = nodejs_22;
+
+  # The `dfy` extra pulls dfy-intel from the PRIVATE github.com/gleim/dfy
+  # repo. Docker/Railway builds receive a GH_TOKEN and can clone it, but the
+  # Nix CI build (nix flake check / nix build) runs with no credentials and
+  # dies with "Failed to fetch git repository 'https://github.com/gleim/dfy.git'".
+  # dfy is an optional extra that self-disables when the package is absent, so
+  # the Nix venv is built with every extra that `all` aggregates EXCEPT `dfy`.
+  #
+  # The list is derived from pyproject.toml's `all` extra (rather than
+  # hardcoded) so it can't drift when extras are added/removed there, then
+  # intersected with the extras actually recorded in uv.lock. That intersection
+  # matters: empty extras such as `cron` (`cron = []`, kept only for back-compat)
+  # are not recorded in the lock, and passing one to uv2nix fails with
+  # "Extra/group name '...' does not match either extra or dependency group".
+  # Callers that DO have credentials can still opt back in via
+  # `.override { extraDependencyGroups = [ "dfy" ]; }`.
+  lockedExtras =
+    let
+      lock = fromTOML (builtins.readFile ../uv.lock);
+      hermesPkgs = builtins.filter (p: p.name == "hermes-agent") lock.package;
+    in
+    if hermesPkgs == [ ] then
+      [ ]
+    else
+      builtins.attrNames ((builtins.head hermesPkgs).optional-dependencies or { });
+
+  allSelfRefExtras =
+    let
+      allDeps = (fromTOML (builtins.readFile ../pyproject.toml)).project.optional-dependencies.all;
+      # Turn a self-referential dep like "hermes-agent[cron]" into "cron";
+      # anything that isn't a self-reference maps to null and is dropped.
+      extractName = dep:
+        if lib.hasPrefix "hermes-agent[" dep && lib.hasSuffix "]" dep then
+          lib.removeSuffix "]" (lib.removePrefix "hermes-agent[" dep)
+        else
+          null;
+    in
+    lib.filter (n: n != null) (map extractName allDeps);
+
+  nixDependencyGroups =
+    lib.filter (n: n != "dfy" && builtins.elem n lockedExtras) allSelfRefExtras;
+
   hermesVenv = callPackage ./python.nix {
     inherit uv2nix pyproject-nix pyproject-build-systems;
-    dependency-groups = [ "all" ] ++ extraDependencyGroups;
+    dependency-groups = nixDependencyGroups ++ extraDependencyGroups;
   };
 
   hermesNpmLib = callPackage ./lib.nix {

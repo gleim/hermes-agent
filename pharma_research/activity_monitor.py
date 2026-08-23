@@ -26,10 +26,10 @@ def log_activity(activity_type, details, status="success"):
     log_file = OUTPUT_DIR / "activity_master.json"
     logs = []
     if log_file.exists():
-        with open(log_file) as f:
+        with open(log_file, encoding="utf-8") as f:
             logs = json.load(f)
     logs.append(activity)
-    with open(log_file, 'w') as f:
+    with open(log_file, "w", encoding="utf-8") as f:
         json.dump(logs, f, indent=2)
     
     return activity, logs
