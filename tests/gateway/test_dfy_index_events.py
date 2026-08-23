@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from typing import Any, Dict
 
-import pytest
+import pytest  # type: ignore[unresolved-import]
 
 from gateway.dfy_index_events import (
     INDEX_STREAM_LABEL,
@@ -19,33 +20,34 @@ from gateway.dfy_index_events import (
 from gateway.dfy_ingest import fold_ingest_events, ingest_token, verify_ingest_token
 
 
-ETH_CLEARED = {
+ETH_CLEARED_DATA: Dict[str, Any] = {
+    "transition": "cleared",
+    "symbol": "ETH",
+    "horizon": "1D",
+    "side": "long",
+    "signed": 0.348,
+    "conf": 0.51,
+    "rung": "purist",
+    "card": {"band": 0.29, "min_conf": 0.45, "name": "Core 1D"},
+    "distance_to_band": 0.058,
+    "feed_version": "harvest-v3",
+    "as_of": "2026-08-23T00:00:00Z",
+    "bar_close_ts": "2026-08-23T00:00:00Z",
+    "source": "underlying",
+    "venue_last_close": 4210.5,
+    "book_near": ["HYPE1D"],
+    "paragraph": (
+        "From here: ETH1D is in on the Core 1D card. "
+        "Mechanism: both bars have to clear; this print did (0.29 / 0.45). "
+        "Metric: signed +0.348, conf 0.51; HYPE1D is +0.279, 1bp short. "
+        "Constraint: the read expires at 1D. Crypto 90M uses 0.14 / 0.40 and is held. "
+        "Not committed: information index, not a trade, not a return."
+    ),
+}
+ETH_CLEARED: Dict[str, Any] = {
     "kind": "index_event",
     "bot": "fci-watcher",
-    "data": {
-        "transition": "cleared",
-        "symbol": "ETH",
-        "horizon": "1D",
-        "side": "long",
-        "signed": 0.348,
-        "conf": 0.51,
-        "rung": "purist",
-        "card": {"band": 0.29, "min_conf": 0.45, "name": "Core 1D"},
-        "distance_to_band": 0.058,
-        "feed_version": "harvest-v3",
-        "as_of": "2026-08-23T00:00:00Z",
-        "bar_close_ts": "2026-08-23T00:00:00Z",
-        "source": "underlying",
-        "venue_last_close": 4210.5,
-        "book_near": ["HYPE1D"],
-        "paragraph": (
-            "From here: ETH1D is in on the Core 1D card. "
-            "Mechanism: both bars have to clear; this print did (0.29 / 0.45). "
-            "Metric: signed +0.348, conf 0.51; HYPE1D is +0.279, 1bp short. "
-            "Constraint: the read expires at 1D. Crypto 90M uses 0.14 / 0.40 and is held. "
-            "Not committed: information index, not a trade, not a return."
-        ),
-    },
+    "data": ETH_CLEARED_DATA,
 }
 
 
@@ -57,7 +59,7 @@ def _clean_index_store():
 
 
 def test_sanitize_labels_stream_index_not_posture():
-    row = sanitize_index_event(ETH_CLEARED["data"], bot="fci")
+    row = sanitize_index_event(ETH_CLEARED_DATA, bot="fci")
     assert row["stream"] == INDEX_STREAM_LABEL
     assert row["label"] == "index"
     assert row["facts"]["symbol"] == "ETH"
@@ -67,30 +69,30 @@ def test_sanitize_labels_stream_index_not_posture():
 
 def test_rejects_paper_overlay_marks():
     with pytest.raises(IndexEventRejected):
-        sanitize_index_event({**ETH_CLEARED["data"], "source": "overlay"})
+        sanitize_index_event({**ETH_CLEARED_DATA, "source": "overlay"})
     with pytest.raises(IndexEventRejected):
-        sanitize_index_event({**ETH_CLEARED["data"], "paper": True})
+        sanitize_index_event({**ETH_CLEARED_DATA, "paper": True})
     with pytest.raises(IndexEventRejected):
-        sanitize_index_event({**ETH_CLEARED["data"], "overlay_marks": [{"n": 195}]})
+        sanitize_index_event({**ETH_CLEARED_DATA, "overlay_marks": [{"n": 195}]})
 
 
 def test_rejects_held_and_unknown_transitions():
     with pytest.raises(IndexEventRejected, match="transition"):
-        sanitize_index_event({**ETH_CLEARED["data"], "transition": "held"})
+        sanitize_index_event({**ETH_CLEARED_DATA, "transition": "held"})
 
 
 def test_rejects_forbidden_trader_fields():
     with pytest.raises(IndexEventRejected, match="forbidden"):
-        sanitize_index_event({**ETH_CLEARED["data"], "pnl": 12.4})
+        sanitize_index_event({**ETH_CLEARED_DATA, "pnl": 12.4})
     with pytest.raises(IndexEventRejected, match="forbidden"):
-        sanitize_index_event({**ETH_CLEARED["data"], "exit_t": "2026-08-24T00:00:00Z"})
+        sanitize_index_event({**ETH_CLEARED_DATA, "exit_t": "2026-08-24T00:00:00Z"})
     with pytest.raises(IndexEventRejected, match="buy/sell"):
-        sanitize_index_event({**ETH_CLEARED["data"], "side": "buy"})
+        sanitize_index_event({**ETH_CLEARED_DATA, "side": "buy"})
 
 
 def test_dedupe_on_symbol_rung_transition_bar():
-    first = apply_index_event(ETH_CLEARED["data"], bot="fci")
-    again = apply_index_event(ETH_CLEARED["data"], bot="fci")
+    first = apply_index_event(ETH_CLEARED_DATA, bot="fci")
+    again = apply_index_event(ETH_CLEARED_DATA, bot="fci")
     assert first is not None
     assert again is None
     assert len(list_index_events()) == 1
@@ -129,7 +131,7 @@ def test_paper_event_not_stored():
     result = fold_ingest_events(
         {
             "kind": "index_event",
-            "data": {**ETH_CLEARED["data"], "source": "lnfm"},
+            "data": {**ETH_CLEARED_DATA, "source": "lnfm"},
         }
     )
     assert result["ingested"] == 0
@@ -140,7 +142,7 @@ def test_paper_event_not_stored():
 def test_freshness_empty_then_populated():
     empty = index_event_freshness()
     assert empty["count"] == 0
-    apply_index_event(ETH_CLEARED["data"], bot="fci")
+    apply_index_event(ETH_CLEARED_DATA, bot="fci")
     ready = index_event_freshness()
     assert ready["count"] == 1
     assert ready["last_symbol"] == "ETH"
@@ -157,7 +159,7 @@ def test_verify_ingest_token(monkeypatch):
 
 def test_redacts_mutantdefi_from_paragraph():
     row = sanitize_index_event(
-        {**ETH_CLEARED["data"], "paragraph": "see MutantDeFi desk"},
+        {**ETH_CLEARED_DATA, "paragraph": "see MutantDeFi desk"},
         bot="fci",
     )
     assert "MutantDeFi" not in row["paragraph"]

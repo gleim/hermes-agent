@@ -93,7 +93,7 @@ def fold_ingest_events(body: Any) -> Dict[str, Any]:
             from gateway.dfy_access import ensure_dfy_intel
 
             ensure_dfy_intel()
-            from dfy_intel.ingest import apply_event
+            from dfy_intel.ingest import apply_event  # type: ignore[unresolved-import]
         except Exception as exc:
             intel_error = f"{type(exc).__name__}: {exc}"
             for ev in trader:

@@ -356,7 +356,7 @@ class X402IntelAdapter(BasePlatformAdapter):
         intel_q = None
         intel_stop = object()
         try:
-            from dfy_intel import broadcaster
+            from dfy_intel import broadcaster  # type: ignore[unresolved-import]
 
             intel_cm = broadcaster.subscribe()
             intel_q = intel_cm.__enter__()

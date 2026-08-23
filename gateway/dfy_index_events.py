@@ -182,7 +182,7 @@ def _broadcast(envelope: Dict[str, Any]) -> None:
             except ValueError:
                 pass
     try:
-        from dfy_intel import broadcaster
+        from dfy_intel import broadcaster  # type: ignore[unresolved-import]
 
         for name in ("publish", "broadcast", "emit", "put"):
             fn = getattr(broadcaster, name, None)
@@ -278,10 +278,12 @@ def sanitize_index_event(
     if _is_paper(data):
         raise IndexEventRejected("paper/overlay/LNFM marks must not fire index_event")
 
-    facts_in = data.get("facts") if isinstance(data.get("facts"), dict) else {}
-    merged: Dict[str, Any] = {}
-    merged.update(facts_in)
-    merged.update({k: v for k, v in data.items() if k != "facts"})
+    raw_facts = data.get("facts")
+    facts_in: Dict[str, Any] = dict(raw_facts) if isinstance(raw_facts, dict) else {}
+    merged: Dict[str, Any] = dict(facts_in)
+    for key, value in data.items():
+        if key != "facts":
+            merged[key] = value
 
     for key in list(merged):
         if _looks_forbidden_key(key):

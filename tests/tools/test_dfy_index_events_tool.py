@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-import pytest
+import pytest  # type: ignore[unresolved-import]
 
 from gateway.dfy_index_events import apply_index_event, reset_index_event_store
 from tools.dfy_index_events_tool import (
