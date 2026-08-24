@@ -156,6 +156,19 @@ class X402IntelAdapter(BasePlatformAdapter):
             return web.Response(text=render_legend("text"), content_type="text/plain")
         return web.json_response(render_legend("json"))
 
+    async def _handle_persona(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/persona — the grok bot personality wrapper.
+
+        The @datafi_live X bot runs as an external service, so it fetches its
+        voice over HTTP rather than importing the module: the persona system
+        prompt plus the tape glossary to ground its own generation. Public and
+        unpaid — it's a style/config surface, not the paid feed, and reveals no
+        method (only how to talk about the public measurements).
+        """
+        from gateway.dfy_tape import render_persona
+
+        return web.json_response(render_persona())
+
     async def _handle_translate(self, request: "web.Request") -> "web.Response":
         """GET/POST /v1/dfy/translate — plain-English "read the tape" translation.
 
@@ -472,9 +485,11 @@ class X402IntelAdapter(BasePlatformAdapter):
         try:
             self._app = web.Application(middlewares=[_cors])
             self._app.router.add_get("/health", self._handle_health)
-            # Public, unpaid education surface for the Live page: the
-            # "How to Read the Tape" guide + plain-English tape translation.
+            # Public, unpaid surface for the Live page + the external grok bot:
+            # the "How to Read the Tape" guide, the plain-English translation,
+            # and the bot personality wrapper. None of these touch the paid feed.
             self._app.router.add_get("/v1/dfy/legend", self._handle_legend)
+            self._app.router.add_get("/v1/dfy/persona", self._handle_persona)
             self._app.router.add_get("/v1/dfy/translate", self._handle_translate)
             self._app.router.add_post("/v1/dfy/translate", self._handle_translate)
             self._app.router.add_get("/v1/dfy/regime", self._handle_regime)

@@ -22,15 +22,22 @@ approachable without changing what the desk publishes:
 * :func:`parse_tape` / :func:`translate_tape` — turn a tape line (or a
   structured card dict) into a relatable, plain-English explanation
   ("read-the-tape translation").
-* ``GROK_PERSONA`` / :func:`wrap_persona` — a consistent, friendly voice for
-  the ``@datafi_live`` grok bot, with the standing transparency + "not
-  investment advice" framing.
+* ``GROK_PERSONA`` / :func:`wrap_persona` / :func:`render_persona` — a
+  consistent, friendly voice for the ``@datafi_live`` grok bot, with the
+  standing transparency + "not investment advice" framing.
+
+The ``@datafi_live`` X (grok) bot runs as an **external service**, so it does
+not import this module — it consumes the pieces over HTTP from the x402
+gateway: ``GET /v1/dfy/persona`` (the personality wrapper + glossary to ground
+its own generation), ``GET|POST /v1/dfy/translate`` (deterministic
+read-the-tape translation), and ``GET /v1/dfy/legend`` (the guide). In-process
+callers (the gateway, CLI, tests) can still import these helpers directly.
 
 Design note: this module deliberately does NOT import the private ``dfy_intel``
 package. :func:`parse_tape` works on the public tape text, and
 :func:`translate_tape` works on either that parse or a structured card dict, so
-it is safe to import anywhere — the grok bot, the gateway HTTP surface, the
-CLI, or tests — regardless of whether the paid feed is installed.
+it is safe to import wherever needed, regardless of whether the paid feed is
+installed.
 """
 
 from __future__ import annotations
@@ -53,6 +60,7 @@ __all__ = [
     "read_the_tape",
     "GROK_PERSONA",
     "wrap_persona",
+    "render_persona",
 ]
 
 LIVE_LINK = "datafi.live"
@@ -606,3 +614,17 @@ def wrap_persona(
         "New here? Here's the tape in plain English:\n\n"
         f"{translation}"
     )
+
+
+def render_persona() -> Dict[str, Any]:
+    """Everything the external ``@datafi_live`` grok bot needs to adopt the
+    voice: the persona system prompt, the tape glossary (to ground its own
+    jargon-decoding), and the standing framing. Served at GET /v1/dfy/persona.
+    """
+    return {
+        "version": LEGEND_VERSION,
+        "persona": GROK_PERSONA,
+        "glossary": [dict(entry) for entry in TAPE_GLOSSARY],
+        "disclaimer": DISCLAIMER,
+        "link": LIVE_LINK,
+    }

@@ -220,3 +220,11 @@ class TestPersona:
         assert "not investment advice" in p
         assert "method" in p and "private" in p
         assert "never promise" in p or "never invent" in p
+
+    def test_render_persona_bundle_for_external_bot(self):
+        bundle = dfy_tape.render_persona()
+        # The external grok bot fetches the voice + vocabulary over HTTP.
+        assert bundle["persona"] == dfy_tape.GROK_PERSONA
+        assert isinstance(bundle["glossary"], list) and len(bundle["glossary"]) >= 8
+        assert bundle["disclaimer"] == DISCLAIMER
+        assert bundle["link"] == LIVE_LINK

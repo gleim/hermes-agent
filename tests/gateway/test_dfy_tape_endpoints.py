@@ -26,6 +26,7 @@ def _legend_app() -> "web.Application":
     adapter = X402IntelAdapter(PlatformConfig(enabled=True))
     app = web.Application(middlewares=[_cors])
     app.router.add_get("/v1/dfy/legend", adapter._handle_legend)
+    app.router.add_get("/v1/dfy/persona", adapter._handle_persona)
     app.router.add_get("/v1/dfy/translate", adapter._handle_translate)
     app.router.add_post("/v1/dfy/translate", adapter._handle_translate)
     return app
@@ -50,6 +51,19 @@ class TestLegendEndpoint:
             assert resp.status == 200
             assert resp.content_type == "text/markdown"
             assert "How to Read the Tape" in await resp.text()
+
+
+class TestPersonaEndpoint:
+    @pytest.mark.asyncio
+    async def test_persona_public_for_external_bot(self):
+        async with TestClient(TestServer(_legend_app())) as cli:
+            resp = await cli.get("/v1/dfy/persona")
+            assert resp.status == 200
+            body = await resp.json()
+            assert "datafi_live" in body["persona"]
+            assert "Not investment advice" in body["persona"]
+            assert len(body["glossary"]) >= 8
+            assert resp.headers.get("Access-Control-Allow-Origin") == "*"
 
 
 class TestTranslateEndpoint:
