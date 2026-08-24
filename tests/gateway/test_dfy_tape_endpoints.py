@@ -136,7 +136,7 @@ class TestPersonaEndpoint:
             assert resp.status == 200
             body = await resp.json()
             assert "datafi" in body["persona"].lower()
-            assert "Not investment advice" in body["persona"]
+            assert "not investment advice" in body["persona"].lower()
             assert len(body["glossary"]) >= 8
             assert resp.headers.get("Access-Control-Allow-Origin") == "*"
 
