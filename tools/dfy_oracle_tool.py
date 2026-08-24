@@ -84,7 +84,8 @@ DFY_ORACLE_SCHEMA = {
         "- 'mechanisms': just the live mechanisms block (open trades, indicators, "
         "exit attribution).\n"
         "- 'signals': recent indicator/signal digests.\n"
-        "- 'activity': recent trade/activity events (entries, exits, snapshots).\n\n"
+        "- 'activity': recent trade/activity events (entries, exits, snapshots).\n"
+        "- 'index': FCI index_event journal (live-print edges only; not trader posture).\n\n"
         "Set include_sources/include_reports=false on the 'oracle' view to trim the "
         "payload when you only need the live numbers."
     ),
@@ -93,7 +94,7 @@ DFY_ORACLE_SCHEMA = {
         "properties": {
             "view": {
                 "type": "string",
-                "enum": ["oracle", "mechanisms", "signals", "activity"],
+                "enum": ["oracle", "mechanisms", "signals", "activity", "index"],
                 "description": "Which slice to return. Default 'oracle' (everything).",
                 "default": "oracle",
             },
@@ -128,6 +129,13 @@ DFY_ORACLE_SCHEMA = {
 
 
 def dfy_oracle_tool(args: Dict[str, Any], **_kwargs) -> str:
+    view = (args.get("view") or "oracle").strip().lower()
+    if view == "index":
+        from gateway.dfy_index_events import citation_payload
+
+        limit = int(args.get("activity_limit") or 25)
+        return tool_result({"view": view, **citation_payload(limit=limit)})
+
     try:
         from dfy_intel.oracle import build_oracle_payload
         from dfy_intel.store import get_dfy_store
@@ -145,8 +153,6 @@ def dfy_oracle_tool(args: Dict[str, Any], **_kwargs) -> str:
         feed_status = feed_freshness()
     except Exception as exc:
         feed_status = {"error": f"{type(exc).__name__}: {exc}"}
-
-    view = (args.get("view") or "oracle").strip().lower()
     signals_limit = int(args.get("signals_limit") or 40)
     activity_limit = int(args.get("activity_limit") or 25)
 
@@ -169,9 +175,16 @@ def dfy_oracle_tool(args: Dict[str, Any], **_kwargs) -> str:
             include_sources=bool(args.get("include_sources", True)),
             include_reports=bool(args.get("include_reports", True)),
         )
+        from gateway.dfy_index_events import citation_payload
+
         # Serialize with default=str so datetimes / numpy scalars survive.
         return json.dumps(
-            {"view": "oracle", "live_feed": feed_status, **payload},
+            {
+                "view": "oracle",
+                "live_feed": feed_status,
+                "index_events": citation_payload(limit=min(activity_limit, 8)),
+                **payload,
+            },
             ensure_ascii=False, default=str,
         )
     except Exception as exc:

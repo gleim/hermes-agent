@@ -12381,6 +12381,31 @@ Examples:
 
     # Default to chat if no command specified
     if args.command is None:
+        # Railway / HERMES_PAAS_HTTP: bare `hermes` is interactive chat and
+        # never binds HTTP, so the public URL 502s while the container looks
+        # "live". Start the gateway instead. Escape hatch: HERMES_PAAS_HTTP=0.
+        try:
+            from gateway.config import is_paas_http_runtime
+
+            _paas_gateway = is_paas_http_runtime()
+        except Exception:
+            _paas_gateway = False
+        if _paas_gateway:
+            print(
+                "PaaS HTTP runtime detected — starting gateway "
+                "(set HERMES_PAAS_HTTP=0 for interactive chat)."
+            )
+            args.command = "gateway"
+            for attr, default in [
+                ("gateway_command", None),
+                ("verbose", 0),
+                ("quiet", False),
+                ("replace", False),
+            ]:
+                if not hasattr(args, attr):
+                    setattr(args, attr, default)
+            cmd_gateway(args)
+            return
         for attr, default in [
             ("query", None),
             ("model", None),

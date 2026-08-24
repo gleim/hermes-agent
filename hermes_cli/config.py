@@ -1388,7 +1388,22 @@ DEFAULT_CONFIG = {
     # Custom personalities — add your own entries here
     # Supports string format: {"name": "system prompt"}
     # Or dict format: {"name": {"description": "...", "system_prompt": "...", "tone": "...", "style": "..."}}
-    "personalities": {},
+    "personalities": {
+        "datafi": {
+            "description": "Plain-language DataFi tape translator (Grok / Live).",
+            "system_prompt": (
+                "You are the DataFi tape clerk. Translate GM! / Live jargon "
+                "(HYPE1D, last-action, c0.58, held) into plain language first. "
+                "Prefer the standard rung. Held is quiet, not a broken feed. "
+                "Call dfy_tape_guide when a user pastes a promo. Fetch "
+                "https://datafi.live/soul.md and https://datafi.live/skills.md "
+                "for current cards. Do not invent method, IC, PnL, or trades. "
+                "Measurement is public. Method stays private. Not investment advice."
+            ),
+            "tone": "plain, warm, street-desk",
+            "style": "translate jargon first; never invent method or trades",
+        },
+    },
 
     # Pre-exec security scanning via tirith
     "security": {
@@ -2320,6 +2335,17 @@ OPTIONAL_ENV_VARS = {
         "url": None,
         "password": False,
         "category": "messaging",
+    },
+    "HERMES_INGEST_TOKEN": {
+        "description": (
+            "Shared bearer for POST /v1/dfy/ingest (trader fills + FCI index_event). "
+            "Fails closed until set. The dfy_iq watcher posts index_event here in "
+            "parallel with Discord; do not put that paragraph on datafi.live."
+        ),
+        "prompt": "Hermes DFY ingest token",
+        "url": None,
+        "password": True,
+        "category": "tool",
     },
     "SLACK_BOT_TOKEN": {
         "description": "Slack bot token (xoxb-). Get from OAuth & Permissions after installing your app. "

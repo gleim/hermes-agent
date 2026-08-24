@@ -13,13 +13,38 @@ import os
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Mapping, Optional, Any, Callable
 from enum import Enum
 
 from hermes_cli.config import get_hermes_home
 from utils import is_truthy_value
 
 logger = logging.getLogger(__name__)
+
+_PAAS_TRUTHY = {"1", "true", "yes", "on"}
+_PAAS_FALSY = {"0", "false", "no", "off"}
+_LOOPBACK_API_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def is_paas_http_runtime(env: Mapping[str, str] | None = None) -> bool:
+    """Return True when this process should expose HTTP on a PaaS edge.
+
+    Railway injects ``RAILWAY_ENVIRONMENT`` / ``RAILWAY_SERVICE_NAME`` /
+    ``RAILWAY_PROJECT_ID``. Operators can force the same behavior with
+    ``HERMES_PAAS_HTTP=1``, or disable it with ``HERMES_PAAS_HTTP=0`` even
+    on Railway (local ``docker run`` / CLI stays unchanged).
+    """
+    source = os.environ if env is None else env
+    explicit = str(source.get("HERMES_PAAS_HTTP", "")).strip().lower()
+    if explicit in _PAAS_TRUTHY:
+        return True
+    if explicit in _PAAS_FALSY:
+        return False
+    return bool(
+        source.get("RAILWAY_ENVIRONMENT")
+        or source.get("RAILWAY_SERVICE_NAME")
+        or source.get("RAILWAY_PROJECT_ID")
+    )
 
 
 def _coerce_bool(value: Any, default: bool = True) -> bool:
@@ -1476,6 +1501,22 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
     api_server_cors_origins = os.getenv("API_SERVER_CORS_ORIGINS", "")
     api_server_port = os.getenv("API_SERVER_PORT")
     api_server_host = os.getenv("API_SERVER_HOST")
+    # Railway (and HERMES_PAAS_HTTP=1) must listen on the edge-facing
+    # address. Default bind is 127.0.0.1, which makes every mapped public
+    # port return 502 Application failed to respond.
+    if is_paas_http_runtime():
+        api_server_enabled = True
+        if not api_server_host or api_server_host in _LOOPBACK_API_HOSTS:
+            api_server_host = "0.0.0.0"
+        if not api_server_port:
+            railway_port = os.getenv("PORT")
+            if railway_port:
+                api_server_port = railway_port
+        logger.info(
+            "PaaS HTTP runtime: enabling api_server on %s:%s",
+            api_server_host,
+            api_server_port or "8642",
+        )
     if api_server_enabled or api_server_key:
         if Platform.API_SERVER not in config.platforms:
             config.platforms[Platform.API_SERVER] = PlatformConfig()

@@ -93,8 +93,9 @@ class TestTapeGuideApiServer:
             assert resp.status == 200
             assert "text/html" in resp.content_type
             text = await resp.text()
-            assert "<!DOCTYPE html>" in text
-            assert "Walk it" in text
+            # api_server is wired to main's dfy_tape_guide renderer (see merge note).
+            assert "<!doctype html>" in text.lower()
+            assert "How to read the tape" in text
 
     @pytest.mark.asyncio
     async def test_machines_still_get_json(self):

@@ -123,6 +123,7 @@ _PUBLIC_API_PATHS: frozenset = frozenset({
     # (accepts ?token= query param for EventSource connections that can't
     # set custom headers).
     "/api/dfy/events",
+    "/api/dfy/tape-guide",
 })
 
 
@@ -3502,6 +3503,28 @@ async def events_ws(ws: WebSocket) -> None:
 # ---------------------------------------------------------------------------
 
 
+@app.get("/api/dfy/tape-guide")
+async def dfy_tape_guide(request: Request):
+    """Public Live-page glossary + Grok personality. No session token."""
+    from gateway.dfy_tape_guide import (
+        tape_guide_html,
+        tape_guide_markdown,
+        tape_guide_payload,
+    )
+
+    blurb = request.query_params.get("blurb")
+    fmt = (request.query_params.get("format") or "").strip().lower()
+    accept = request.headers.get("Accept", "")
+    if fmt == "md" or "text/markdown" in accept:
+        return Response(
+            tape_guide_markdown(blurb),
+            media_type="text/markdown; charset=utf-8",
+        )
+    if fmt == "html" or "text/html" in accept:
+        return HTMLResponse(tape_guide_html(blurb))
+    return JSONResponse(tape_guide_payload(blurb))
+
+
 @app.get("/api/dfy/events")
 async def dfy_events_proxy(request: Request):
     """Proxy the x402 intel SSE stream to the dashboard frontend.
@@ -3543,32 +3566,54 @@ async def dfy_events_proxy(request: Request):
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    # Resolve the x402 intel server address from env / defaults.
+    # Prefer api_server (public ingest surface, includes index_event) then
+    # fall back to the optional x402 intel port.
+    api_host = os.getenv("API_SERVER_HOST", "127.0.0.1")
+    api_port = int(os.getenv("API_SERVER_PORT", "8642"))
     x402_host = os.getenv("X402_INTEL_HOST", "127.0.0.1")
     x402_port = int(os.getenv("X402_INTEL_PORT", "8643"))
-    upstream_url = f"http://{x402_host}:{x402_port}/v1/dfy/events"
+    upstream_urls = [
+        f"http://{api_host}:{api_port}/v1/dfy/events",
+        f"http://{x402_host}:{x402_port}/v1/dfy/events",
+    ]
 
     async def _stream():
+        import socket as _socket
         import urllib.request as _urllib_req
         import urllib.error as _urllib_err
 
-        req = _urllib_req.Request(
-            upstream_url,
-            headers={"Authorization": f"Bearer {ingest_token}"},
-        )
-        try:
-            with _urllib_req.urlopen(req, timeout=None) as resp:
-                while True:
-                    line = await asyncio.get_event_loop().run_in_executor(
-                        None, resp.readline
-                    )
-                    if not line:
-                        break
-                    yield line
-        except _urllib_err.URLError as exc:
-            yield f"data: {{\"error\": \"upstream unavailable: {exc.reason}\"}}\n\n".encode()
-        except Exception as exc:
-            yield f"data: {{\"error\": \"{exc}\"}}\n\n".encode()
+        last_err = None
+        for host, port, upstream_url in (
+            (api_host, api_port, upstream_urls[0]),
+            (x402_host, x402_port, upstream_urls[1]),
+        ):
+            try:
+                with _socket.create_connection((host, int(port)), timeout=1.5):
+                    pass
+            except OSError as exc:
+                last_err = exc
+                continue
+            req = _urllib_req.Request(
+                upstream_url,
+                headers={"Authorization": f"Bearer {ingest_token}"},
+            )
+            try:
+                with _urllib_req.urlopen(req, timeout=None) as resp:
+                    while True:
+                        line = await asyncio.get_event_loop().run_in_executor(
+                            None, resp.readline
+                        )
+                        if not line:
+                            break
+                        yield line
+                return
+            except _urllib_err.URLError as exc:
+                last_err = exc.reason
+                continue
+            except Exception as exc:
+                last_err = exc
+                continue
+        yield f"data: {{\"error\": \"upstream unavailable: {last_err}\"}}\n\n".encode()
 
     return StreamingResponse(
         _stream(),
