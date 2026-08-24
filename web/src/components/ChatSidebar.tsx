@@ -30,6 +30,7 @@ import { Card } from "@/components/ui/card";
 import { ModelPickerDialog } from "@/components/ModelPickerDialog";
 import { ToolCall, type ToolEntry } from "@/components/ToolCall";
 import { DfyEventItem, type DfyEvent } from "@/components/DfyEventItem";
+import { TapeGuide } from "@/components/TapeGuide";
 import { GatewayClient, type ConnectionState } from "@/lib/gatewayClient";
 
 import { cn } from "@/lib/utils";
@@ -458,6 +459,7 @@ export function ChatSidebar({ channel, className }: ChatSidebarProps) {
             </Button>
           )}
         </div>
+        <TapeGuide />
 
         {dfyError && (
           <div className="mb-1.5 flex items-start gap-1.5 rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-xs">

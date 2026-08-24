@@ -74,6 +74,18 @@ Hermes runs **independently** of the dfai traders, so neither the snapshot file 
   - `index_event` → **index** journal (not posture). FCI live-print edges only (`cleared` / `expired` / `near_miss`). Same token, same envelope; Hermes does not fold these into desk / `brief_view` / trader activity. Writer is the dfy_iq watcher (`event_narrator`); Discord lands separately via `DISCORD_INDEX_EVENT_WEBHOOK_URL` and must not wait on this host. Cite via `dfy_index_events` or `dfy_oracle` view=`index`. Internal read: `GET /v1/dfy/index-events` (bearer, not x402 / not datafi.live).
   - Enable the receiver: set **`HERMES_INGEST_TOKEN=<shared secret>`** in the gateway process env (the route is always registered on the api_server; ingestion **fails closed** — 503 — until the token is set, and 401 on mismatch). The trader sets the matching token + `HERMES_INGEST_URL=https://<host>/v1/dfy/ingest` (or `hermes.url`/`hermes.token` in config) — see `freqtrade_mods/DEPLOY_MANIFEST.md`. (The same route is also mirrored on the optional x402_intel adapter on `:8643` for co-located deployments.)
 
+### How to read the tape (Live page + Grok)
+
+First-time X / Live readers see `HYPE1D`, `c0.58`, `held` with no hook. Hermes now ships the glossary + clerk voice (public, no bearer):
+
+- `GET /v1/dfy/tape-guide` — JSON (default), `?format=md`, `?format=html`, optional `?blurb=`
+- Dashboard: `/api/dfy/tape-guide` + "How to read the tape" on the DFY events card
+- Agent tool: `dfy_tape_guide` (core + dfy toolset)
+- Skill: `skills/research/read-the-tape/`
+- `/personality datafi` — Grok / GROUP wrapper (full clerk prompt is `personality.system_prompt` on the tape-guide payload)
+
+The Live page (`datafi.live/live`) should fetch the JSON/HTML and render a drawer. Do **not** put `index_event` narrator paragraphs on that face. Card numbers stay on `https://datafi.live/soul.md`.
+
 ### Railway (`hermes.mutantdefi.com` vs `chat.mutantdefi.com`)
 
 Same split as DataDeFi: **`hermes.mutantdefi.com`** is this repo (gateway / `api_server`); **`chat.mutantdefi.com`** is the separate `dfy-chat` service on port 8080. Do not attach the chat domain to Hermes.
