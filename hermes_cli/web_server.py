@@ -123,6 +123,7 @@ _PUBLIC_API_PATHS: frozenset = frozenset({
     # (accepts ?token= query param for EventSource connections that can't
     # set custom headers).
     "/api/dfy/events",
+    "/api/dfy/tape-guide",
 })
 
 
@@ -3500,6 +3501,28 @@ async def events_ws(ws: WebSocket) -> None:
 # cross-origin issues and keeping the HERMES_INGEST_TOKEN out of the
 # browser.  Auth is the dashboard session token (same as all /api/ routes).
 # ---------------------------------------------------------------------------
+
+
+@app.get("/api/dfy/tape-guide")
+async def dfy_tape_guide(request: Request):
+    """Public Live-page glossary + Grok personality. No session token."""
+    from gateway.dfy_tape_guide import (
+        tape_guide_html,
+        tape_guide_markdown,
+        tape_guide_payload,
+    )
+
+    blurb = request.query_params.get("blurb")
+    fmt = (request.query_params.get("format") or "").strip().lower()
+    accept = request.headers.get("Accept", "")
+    if fmt == "md" or "text/markdown" in accept:
+        return Response(
+            tape_guide_markdown(blurb),
+            media_type="text/markdown; charset=utf-8",
+        )
+    if fmt == "html" or "text/html" in accept:
+        return HTMLResponse(tape_guide_html(blurb))
+    return JSONResponse(tape_guide_payload(blurb))
 
 
 @app.get("/api/dfy/events")

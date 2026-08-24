@@ -15,6 +15,7 @@ Exposes an HTTP server with endpoints:
 - POST /v1/runs/{run_id}/stop       — interrupt a running agent
 - GET  /health                     — health check
 - GET  /health/detailed            — rich status for cross-container dashboard probing
+- GET  /v1/dfy/tape-guide          — public Live-page glossary + Grok personality (no bearer)
 
 Any OpenAI-compatible frontend (Open WebUI, LobeChat, LibreChat,
 AnythingLLM, NextChat, ChatBox, etc.) can connect to hermes-agent
@@ -906,6 +907,34 @@ class APIServerAdapter(BasePlatformAdapter):
             "pid": os.getpid(),
         })
 
+    async def _handle_dfy_tape_guide(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/tape-guide — public Live-page glossary + Grok voice.
+
+        No bearer. The Live page and first-time X readers need this without
+        API_SERVER_KEY. Optional ``blurb`` query translates a cryptic promo.
+        ``format=md`` / ``format=html`` for embeddable copy.
+        """
+        from gateway.dfy_tape_guide import (
+            tape_guide_html,
+            tape_guide_markdown,
+            tape_guide_payload,
+        )
+
+        blurb = request.query.get("blurb")
+        fmt = (request.query.get("format") or "").strip().lower()
+        accept = request.headers.get("Accept", "")
+        if fmt == "md" or "text/markdown" in accept:
+            return web.Response(
+                text=tape_guide_markdown(blurb),
+                content_type="text/markdown; charset=utf-8",
+            )
+        if fmt == "html" or "text/html" in accept:
+            return web.Response(
+                text=tape_guide_html(blurb),
+                content_type="text/html; charset=utf-8",
+            )
+        return web.json_response(tape_guide_payload(blurb))
+
     async def _handle_dfy_ingest(self, request: "web.Request") -> "web.Response":
         """POST /v1/dfy/ingest — receive events PUSHED outbound to Hermes.
 
@@ -1218,6 +1247,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 "run_events": {"method": "GET", "path": "/v1/runs/{run_id}/events"},
                 "run_approval": {"method": "POST", "path": "/v1/runs/{run_id}/approval"},
                 "run_stop": {"method": "POST", "path": "/v1/runs/{run_id}/stop"},
+                "dfy_tape_guide": {"method": "GET", "path": "/v1/dfy/tape-guide"},
             },
         })
 
@@ -3598,6 +3628,7 @@ class APIServerAdapter(BasePlatformAdapter):
             self._app.router.add_get("/health", self._handle_health)
             self._app.router.add_get("/health/detailed", self._handle_health_detailed)
             self._app.router.add_get("/v1/health", self._handle_health)
+            self._app.router.add_get("/v1/dfy/tape-guide", self._handle_dfy_tape_guide)
             self._app.router.add_get("/v1/models", self._handle_models)
             self._app.router.add_get("/v1/capabilities", self._handle_capabilities)
             self._app.router.add_post("/v1/chat/completions", self._handle_chat_completions)

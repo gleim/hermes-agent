@@ -76,6 +76,8 @@ _HERMES_CORE_TOOLS = [
     "dfy_oracle",
     # FCI index_event journal (live-print edges). Gated on HERMES_INGEST_TOKEN.
     "dfy_index_events",
+    # Public tape glossary + Grok translator (no ingest token).
+    "dfy_tape_guide",
 ]
 
 
@@ -270,11 +272,12 @@ TOOLSETS = {
             "DFY trading oracle: inspect the live trading bot's strategy "
             "internals, published analytic reports, and real-time feed (open "
             "trades, per-pair indicators, recent signals, realized exits + "
-            "attribution). Also cites FCI index_event prints (not trader posture). "
+            "attribution). Also cites FCI index_event prints (not trader posture) "
+            "and translates Live-page tape jargon for first-time readers. "
             "Gated on a DFY snapshot/env being present. Configure "
             "sources via DFY_ORACLE_STRATEGY_PATHS/DIR and DFY_ORACLE_REPORT_PATHS/DIR."
         ),
-        "tools": ["dfy_oracle", "dfy_index_events"],
+        "tools": ["dfy_oracle", "dfy_index_events", "dfy_tape_guide"],
         "includes": [],
     },
 
