@@ -15,7 +15,7 @@ Exposes an HTTP server with endpoints:
 - POST /v1/runs/{run_id}/stop       — interrupt a running agent
 - GET  /health                     — health check
 - GET  /health/detailed            — rich status for cross-container dashboard probing
-- GET  /v1/dfy/tape-guide          — public Live-page glossary + Grok personality (no bearer)
+- GET  /v1/dfy/tape-guide          — public first-reader tape guide (HTML or JSON; no auth)
 
 Any OpenAI-compatible frontend (Open WebUI, LobeChat, LibreChat,
 AnythingLLM, NextChat, ChatBox, etc.) can connect to hermes-agent
@@ -926,12 +926,14 @@ class APIServerAdapter(BasePlatformAdapter):
         if fmt == "md" or "text/markdown" in accept:
             return web.Response(
                 text=tape_guide_markdown(blurb),
-                content_type="text/markdown; charset=utf-8",
+                content_type="text/markdown",
+                charset="utf-8",
             )
         if fmt == "html" or "text/html" in accept:
             return web.Response(
                 text=tape_guide_html(blurb),
-                content_type="text/html; charset=utf-8",
+                content_type="text/html",
+                charset="utf-8",
             )
         return web.json_response(tape_guide_payload(blurb))
 

@@ -140,6 +140,101 @@ class X402IntelAdapter(BasePlatformAdapter):
     async def _handle_health(self, request: "web.Request") -> "web.Response":
         return web.json_response({"status": "ok", "service": "hermes-x402-dfy"})
 
+    async def _handle_tape_guide(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/tape-guide — public first-reader guide. Unpaid.
+
+        Same document as api_server. Browsers get HTML; machines get JSON.
+        """
+        from gateway.dfy_tape import serve_tape_guide
+
+        body, ctype = serve_tape_guide(
+            request.headers.get("Accept") or "",
+            request.query.get("format") or "",
+        )
+        media = ctype.split(";", 1)[0].strip()
+        return web.Response(
+            text=body,
+            content_type=media,
+            charset="utf-8",
+            headers={"Vary": "Accept"},
+        )
+
+    async def _handle_legend(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/legend — the public "How to Read the Tape" guide.
+
+        Educational, not the paid feed, so it is served without an x402
+        challenge (like /health). ``?format=markdown|text`` returns the raw
+        document; the default returns JSON (glossary + pre-rendered markdown).
+        """
+        from gateway.dfy_tape import render_legend
+
+        fmt = (request.query.get("format") or "json").strip().lower()
+        if fmt == "markdown":
+            return web.Response(text=render_legend("markdown"), content_type="text/markdown")
+        if fmt == "text":
+            return web.Response(text=render_legend("text"), content_type="text/plain")
+        return web.json_response(render_legend("json"))
+
+    async def _handle_persona(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/persona — the grok bot personality wrapper.
+
+        The @datafi_live X bot runs as an external service, so it fetches its
+        voice over HTTP rather than importing the module: the persona system
+        prompt plus the tape glossary to ground its own generation. Public and
+        unpaid — it's a style/config surface, not the paid feed, and reveals no
+        method (only how to talk about the public measurements).
+        """
+        from gateway.dfy_tape import render_persona
+
+        return web.json_response(render_persona())
+
+    async def _handle_translate(self, request: "web.Request") -> "web.Response":
+        """GET/POST /v1/dfy/translate — plain-English "read the tape" translation.
+
+        Reformats caller-supplied tape text or a card object; it never touches
+        the paid feed, so it is unpaid. Body/query:
+          * ``text`` — a raw tape post, or
+          * ``card`` — a structured card object (POST JSON only)
+          * ``style`` — ``lead`` | ``reply`` | ``plain`` (persona wrapper);
+            omit for the bare translation + decode.
+        """
+        from gateway.dfy_tape import parse_tape, read_the_tape, translate_tape, wrap_persona
+
+        text: str = ""
+        card = None
+        style = (request.query.get("style") or "").strip().lower()
+
+        if request.method == "POST":
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            if isinstance(body, dict):
+                text = str(body.get("text") or "")
+                if isinstance(body.get("card"), dict):
+                    card = body["card"]
+                style = str(body.get("style") or style).strip().lower()
+        else:
+            text = str(request.query.get("text") or "")
+
+        source: Any = card if card is not None else text
+        if not source:
+            return web.json_response(
+                {"error": "provide 'text' (a tape post) or 'card' (a card object)"},
+                status=400,
+            )
+
+        if style in ("lead", "reply", "plain"):
+            return web.json_response(
+                {"style": style, "message": wrap_persona(source, style=style)}
+            )
+
+        if card is not None:
+            return web.json_response(
+                {"decoded": card, "translation": translate_tape(card)}
+            )
+        return web.json_response(read_the_tape(text))
+
     def _posture_store(self):
         from dfy_intel.store import get_dfy_store
 
@@ -457,6 +552,14 @@ class X402IntelAdapter(BasePlatformAdapter):
         try:
             self._app = web.Application(middlewares=[_cors])
             self._app.router.add_get("/health", self._handle_health)
+            # Public, unpaid surface for the Live page + the external grok bot:
+            # the "How to Read the Tape" guide, the plain-English translation,
+            # and the bot personality wrapper. None of these touch the paid feed.
+            self._app.router.add_get("/v1/dfy/tape-guide", self._handle_tape_guide)
+            self._app.router.add_get("/v1/dfy/legend", self._handle_legend)
+            self._app.router.add_get("/v1/dfy/persona", self._handle_persona)
+            self._app.router.add_get("/v1/dfy/translate", self._handle_translate)
+            self._app.router.add_post("/v1/dfy/translate", self._handle_translate)
             self._app.router.add_get("/v1/dfy/regime", self._handle_regime)
             self._app.router.add_get("/v1/dfy/posture", self._handle_posture)
             self._app.router.add_get("/v1/dfy/attribution", self._handle_attribution)
