@@ -1,8 +1,7 @@
-"""Read-the-tape helpers for the DFY / datafi.live "Live" surface.
+"""Read-the-tape guide for first-time Live readers and the external grok bot.
 
-New users auditing a ticker for the first time, or reading a promo on X, hit a
-terse status line ("the tape") that carries a lot of meaning in very little
-text, e.g.::
+A first-time reader auditing a ticker, or opening a promo on X, hits a terse
+status line ("the tape")::
 
     GM! tape, standard.
 
@@ -13,50 +12,49 @@ text, e.g.::
     private. Not investment advice.
     datafi.live
 
-That density is great for regulars and cryptic for everyone else. This module
-is the Hermes-side, dependency-free home for three things that make the tape
-approachable without changing what the desk publishes:
+This module is the Hermes-side, dependency-free home for that first exposure:
 
-* ``TAPE_GLOSSARY`` / :func:`render_legend` — the "How to Read the Tape" guide
-  the Live page renders (served unpaid at ``GET /v1/dfy/legend``).
-* :func:`parse_tape` / :func:`translate_tape` — turn a tape line (or a
-  structured card dict) into a relatable, plain-English explanation
-  ("read-the-tape translation").
-* ``GROK_PERSONA`` / :func:`wrap_persona` / :func:`render_persona` — a
-  consistent, friendly voice for the ``@datafi_live`` grok bot, with the
-  standing transparency + "not investment advice" framing.
+* :func:`render_tape_guide` / :func:`render_tape_guide_html` — the public
+  "How to read the tape" document. Browsers get HTML; machines get JSON.
+  Served unpaid at ``GET /v1/dfy/tape-guide`` on the api_server host
+  (``hermes.datadefi.ai``) and on the x402 gateway.
+* :func:`parse_tape` / :func:`translate_tape` — decode a tape line or card
+  into house-accurate plain English (print vs signed, both-bars event, held).
+* :func:`render_persona` / :func:`wrap_persona` — the personality wrapper the
+  **external** ``@datafi_live`` grok bot fetches over HTTP.
 
-The ``@datafi_live`` X (grok) bot runs as an **external service**, so it does
-not import this module — it consumes the pieces over HTTP from the x402
-gateway: ``GET /v1/dfy/persona`` (the personality wrapper + glossary to ground
-its own generation), ``GET|POST /v1/dfy/translate`` (deterministic
-read-the-tape translation), and ``GET /v1/dfy/legend`` (the guide). In-process
-callers (the gateway, CLI, tests) can still import these helpers directly.
-
-Design note: this module deliberately does NOT import the private ``dfy_intel``
-package. :func:`parse_tape` works on the public tape text, and
-:func:`translate_tape` works on either that parse or a structured card dict, so
-it is safe to import wherever needed, regardless of whether the paid feed is
-installed.
+The X bot does not import this module. It consumes ``/v1/dfy/tape-guide``,
+``/v1/dfy/persona``, and ``/v1/dfy/translate``. This module does not import
+the private ``dfy_intel`` package.
 """
 
 from __future__ import annotations
 
+import html
+import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 __all__ = [
     "LIVE_LINK",
+    "LIVE_URL",
+    "SOUL_URL",
+    "SKILLS_URL",
     "DISCLAIMER",
     "TAPE_GLOSSARY",
     "LEGEND_VERSION",
+    "EXAMPLE_TAPE",
     "TapeCard",
     "humanize_horizon",
     "split_symbol_horizon",
     "parse_tape",
     "translate_tape",
     "render_legend",
+    "render_tape_guide",
+    "render_tape_guide_html",
+    "negotiate_tape_guide",
+    "serve_tape_guide",
     "read_the_tape",
     "GROK_PERSONA",
     "wrap_persona",
@@ -64,126 +62,207 @@ __all__ = [
 ]
 
 LIVE_LINK = "datafi.live"
+LIVE_URL = "https://datafi.live/live"
+SOUL_URL = "https://datafi.live/soul.md"
+SKILLS_URL = "https://datafi.live/skills.md"
 DISCLAIMER = "Not investment advice."
-LEGEND_VERSION = "1"
+LEGEND_VERSION = "2"
 
-# Horizon codes seen on the tape → human phrasing. Anything not listed is
-# decoded generically by :func:`humanize_horizon` (e.g. "45M" → "45-minute").
 _HORIZON_UNITS = {"M": "minute", "H": "hour", "D": "day", "W": "week"}
 
-# ---------------------------------------------------------------------------
-# Glossary — the canonical "How to Read the Tape" content (single source of
-# truth for the endpoint, the docs, and the persona wrapper).
-# ---------------------------------------------------------------------------
+TICKER_NAMES = {
+    "HYPE": "Hyperliquid",
+    "BTC": "Bitcoin",
+    "ETH": "Ethereum",
+    "GOLD": "gold",
+    "SILVER": "silver",
+    "CL": "crude",
+}
 
+EXAMPLE_TAPE = (
+    "GM! tape, standard.\n\n"
+    "HYPE1D is the live card: last-action +0.413 / c0.58, long. Still open, "
+    "1D exit in ~15h. Current print 0.634.\n\n"
+    "Core 1D held. HYPE90M 0.553, held. Measurement is public. Method stays "
+    "private. Not investment advice.\n"
+    "datafi.live"
+)
+
+LEDE = (
+    "The Live page is a probability-density tape under the GM! Index — not a "
+    "price chart and not a trade ticket. One name can be live. The rest stay "
+    "held. Measurement is public. Method stays private."
+)
+
+# House glossary. Keys match the live /v1/dfy/tape-guide contract
+# (term / example / plain). token / meaning are aliases for older callers.
 TAPE_GLOSSARY: List[Dict[str, str]] = [
     {
-        "token": "GM! tape, <variant>",
-        "example": "GM! tape, standard.",
-        "meaning": (
-            "The opening line. 'GM' is just 'good morning'. 'tape' means this is a "
-            "routine status post; the variant (e.g. 'standard') says which cadence "
-            "of update you're looking at."
+        "term": "ticker + horizon",
+        "example": "HYPE1D, BTC90M, XYZ-GOLD1D",
+        "plain": (
+            "The name plus the clock. HYPE1D is Hyperliquid on the one-day book. "
+            "BTC90M is Bitcoin on the ninety-minute book. XYZ- prefixes are listed "
+            "metals/energy names on the same 1D book."
         ),
     },
     {
-        "token": "<SYMBOL><HORIZON>",
-        "example": "HYPE1D",
-        "meaning": (
-            "A card id: the ticker followed by its time horizon. 'HYPE1D' is HYPE on "
-            "the 1-day horizon; 'HYPE90M' is HYPE on the 90-minute horizon."
-        ),
-    },
-    {
-        "token": "live card",
-        "example": "HYPE1D is the live card",
-        "meaning": "The single card the desk is featuring right now — the headline read.",
-    },
-    {
-        "token": "last-action",
-        "example": "last-action +0.413",
-        "meaning": (
-            "The measured result since the most recent action on this card. Positive "
-            "is in the read's favor, negative is against it. It is a measurement, not "
-            "a promised return."
-        ),
-    },
-    {
-        "token": "c<0-1>",
-        "example": "c0.58",
-        "meaning": (
-            "Confidence in the read, on a 0-to-1 scale. 0.58 is moderate conviction; "
-            "closer to 1 is stronger, closer to 0 is weaker."
-        ),
-    },
-    {
-        "token": "long / short",
-        "example": "long",
-        "meaning": (
-            "The direction of the read. 'long' expects the price to rise; 'short' "
-            "expects it to fall."
-        ),
-    },
-    {
-        "token": "Still open / closed",
-        "example": "Still open",
-        "meaning": "Whether the tracked position is currently active or already exited.",
-    },
-    {
-        "token": "<HORIZON> exit in ~<time>",
-        "example": "1D exit in ~15h",
-        "meaning": (
-            "When the horizon-based exit is scheduled. '1D exit in ~15h' means the "
-            "1-day card is set to close in about 15 hours."
-        ),
-    },
-    {
-        "token": "Current print",
+        "term": "print",
         "example": "Current print 0.634",
-        "meaning": "The latest live value of the measure for this card, as of the post.",
+        "plain": (
+            "The unsigned conviction number, always in [0, 1]. 0.5 is even. Above "
+            "0.5 leans long; below 0.5 leans short. This series does not jump when "
+            "an event fires."
+        ),
     },
     {
-        "token": "Core <HORIZON> held",
+        "term": "signed",
+        "example": "last-action +0.413",
+        "plain": (
+            "The print rewritten as a lean: (print − 0.5) × 2. Zero is even. "
+            "Positive is long; negative is short. +0.413 is a clear long lean, not "
+            "a price and not a return."
+        ),
+    },
+    {
+        "term": "conf / c0.58",
+        "example": "c0.58",
+        "plain": (
+            "Confidence on that same reading, 0 to 1. A large lean with weak "
+            "confidence is not an event. A confident whisper is not an event. Both "
+            "bars have to clear."
+        ),
+    },
+    {
+        "term": "live card / last-action",
+        "example": "HYPE1D is the live card",
+        "plain": (
+            "The one name that currently cleared both bars on the selected rung. "
+            "Last-action is the signed / conf / side from that fire. Other names "
+            "stay held until they clear too."
+        ),
+    },
+    {
+        "term": "held",
         "example": "Core 1D held",
-        "meaning": (
-            "The anchor (primary) horizon read did not change at the last check — "
-            "'held' means kept as-is, versus flipped (reversed) or cut (closed)."
+        "plain": (
+            "Quiet on that book — neither bar cleared. Held is information, not a "
+            "broken feed and not a sell. Blue cells on the Live page are held."
         ),
     },
     {
-        "token": "<SYMBOL><HORIZON> <value>, held",
-        "example": "HYPE90M 0.553, held",
-        "meaning": (
-            "A secondary read: the same ticker on another horizon, its current value, "
-            "and whether it held / flipped / cut."
+        "term": "open / exit in ~15h",
+        "example": "Still open, 1D exit in ~15h",
+        "plain": (
+            "The event is still inside its horizon clock. A 1D event expires at the "
+            "one-day bar, not when the print wiggles. ~15h left means the claim is "
+            "still live."
         ),
     },
     {
-        "token": "Measurement is public. Method stays private.",
-        "example": "Measurement is public. Method stays private.",
-        "meaning": (
-            "The transparency policy: the desk publishes the numbers it measures, but "
-            "not the strategy that produces them."
+        "term": "rung",
+        "example": "tape, standard",
+        "plain": (
+            "Which frozen card is reading the same print. Purist fires least "
+            "(strongest lean). Standard is the house default. Active fires earliest. "
+            "Prefer standard unless the caller asked otherwise."
         ),
     },
     {
-        "token": DISCLAIMER,
-        "example": DISCLAIMER,
-        "meaning": "A standing disclaimer — the tape is information, not a recommendation.",
+        "term": "GM! Core / GM! Crypto",
+        "example": "Core 1D · Crypto 90M",
+        "plain": (
+            "Two published baskets under the GM! Index flagship. Core is the 1D book "
+            "(BTC, ETH, HYPE, GOLD, SILVER, CL). Crypto is the 90M book (BTC, ETH, HYPE)."
+        ),
     },
     {
-        "token": LIVE_LINK,
-        "example": LIVE_LINK,
-        "meaning": "Where to see the live cards and the full tape.",
+        "term": "Measurement is public. Method stays private.",
+        "example": "house closer",
+        "plain": (
+            "You can see the numbers. We do not publish how the unsigned series is "
+            "built. Not investment advice. Not a trade. Not a return."
+        ),
     },
 ]
 
-LEGEND_INTRO = (
-    "The tape is a short status line the desk posts for each live card. It packs "
-    "the ticker, its time horizon, the direction and confidence of the read, "
-    "whether the position is open, when it exits, and the latest value — into a "
-    "few characters. Here is what each piece means."
+for _entry in TAPE_GLOSSARY:
+    _entry.setdefault("token", _entry["term"])
+    _entry.setdefault("meaning", _entry["plain"])
+
+NOT_LIST = [
+    "Not a buy or sell.",
+    "Not a return, yield, or PnL.",
+    "Not the information coefficient.",
+    "Not a second index you invent a tighter cutoff on.",
+]
+
+GUIDE_CANONICAL = "https://hermes.datadefi.ai/v1/dfy/tape-guide"
+
+GROK_PERSONA = """\
+You are the DataFi tape clerk — the public voice that translates the GM! Index for someone who just tapped a promo on X or opened a ticker for the first time.
+
+Voice
+- Plain first, jargon second. Lead with the name and the clock, not the house telegram.
+- Warm, brief, street-desk. No hype-bro, no "GM! tape, standard." as an opener for first-timers.
+- One screen of prose. Then the glossary terms in the same breath if they help.
+- Never invent method, omega, IC, PnL, yield, buy/sell, or MutantDeFi-as-a-fact.
+- Always close public reads with: measurement is public, method stays private, not investment advice.
+
+What the tape is
+- DataFi is the brand. GM! Index is the current flagship. The tape is a probability density under that flagship — not a price forecast and not a return.
+- A print is the unsigned number in [0, 1]. 0.5 is even. Signed is (print − 0.5) × 2.
+- An event fires only when |signed| ≥ band AND confidence ≥ min_conf on a frozen card. One bar is not enough.
+- Held is a quiet book, not a broken feed.
+- Prefer the standard rung unless the caller asked for purist or active.
+
+How to answer
+1. If they paste a cryptic blurb, call dfy_tape_guide with that text (or translate it yourself using the same glossary).
+2. Fetch https://datafi.live/soul.md and https://datafi.live/skills.md when you need current cards, mint, or house identity. Do not keep a stale copy.
+3. Cite https://datafi.live/live for the public tape. Do not dump narrator paragraphs or desk internals onto the Live page.
+4. Do not impersonate DataDeFi (datadefi.ai). Do not tell humans to use slash commands.
+5. If they ask how the numbers are built, refuse the method and point at the public measurement.
+
+Translate this shape of promo:
+"HYPE1D is the live card: last-action +0.413 / c0.58, long. Still open, 1D exit in ~15h. Current print 0.634."
+→ "Hyperliquid just cleared the one-day card — that's the only live read right now. When it fired, lean was +0.413 long at 0.58 confidence. About 15 hours left on that claim. The tape now reads 0.634."
+"""
+
+# Editorial walkthrough on the HTML face. Machines still get translate_tape().
+WORKED_EXAMPLE_PLAIN = (
+    "Good morning — this is the GM! Index tape on the house-default standard card.\n\n"
+    "Hyperliquid on the one-day book is the only name that currently cleared both bars. "
+    "When that event fired, the lean was +0.413 (long) with 0.58 confidence. That claim "
+    "is still open: about 15 hours left on the one-day clock. The unsigned print right "
+    "now is 0.634 (above 0.5 still leans long).\n\n"
+    "The rest of the one-day book is held — quiet, not broken. The same name on the "
+    "ninety-minute book is also held; its print is 0.553.\n\n"
+    "You can see the numbers. We don't publish how they're made. This is not a trade "
+    "recommendation."
 )
+
+WALK_ROWS = [
+    (
+        "HYPE1D",
+        "Hyperliquid on the one-day book — the name plus the clock.",
+    ),
+    (
+        "last-action +0.413 / c0.58, long",
+        "When it fired: lean +0.413 long at 0.58 confidence. Both bars cleared, so this is the live card — not a price and not a return.",
+    ),
+    (
+        "Still open, 1D exit in ~15h",
+        "The claim is still inside its one-day clock. About 15 hours left. The print wiggling does not end it.",
+    ),
+    (
+        "Current print 0.634",
+        "Unsigned conviction now, always in [0, 1]. 0.5 is even; 0.634 still leans long. This series does not jump when an event fires.",
+    ),
+    (
+        "Core 1D held · HYPE90M 0.553, held",
+        "Quiet books. Held is information — not a broken feed and not a sell. Blue cells on Live are held.",
+    ),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -193,11 +272,7 @@ LEGEND_INTRO = (
 
 @dataclass
 class TapeCard:
-    """A structured view of a tape card.
-
-    Every field is optional so the same shape works for a fully-specified card
-    coming from the feed and for a best-effort :func:`parse_tape` of a raw post.
-    """
+    """A structured view of a tape card. All fields optional (tolerant parse)."""
 
     variant: Optional[str] = None
     symbol: Optional[str] = None
@@ -238,13 +313,21 @@ class TapeCard:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TapeCard":
-        known = {f for f in cls().to_dict()}
+        known = set(cls().to_dict())
         return cls(**{k: v for k, v in (data or {}).items() if k in known})
 
 
 # ---------------------------------------------------------------------------
-# Horizon helpers
+# Horizon / name helpers
 # ---------------------------------------------------------------------------
+
+
+_HORIZON_PHRASE = {
+    "1D": "one-day",
+    "90M": "ninety-minute",
+    "4H": "four-hour",
+    "2W": "two-week",
+}
 
 
 def humanize_horizon(code: Optional[str]) -> Optional[str]:
@@ -259,11 +342,27 @@ def humanize_horizon(code: Optional[str]) -> Optional[str]:
     return f"{int(n)}-{word}"
 
 
+def horizon_phrase(code: Optional[str]) -> Optional[str]:
+    """House phrasing: '1D' → 'one-day', else fall back to humanize_horizon."""
+    if not code:
+        return None
+    key = str(code).strip().upper()
+    return _HORIZON_PHRASE.get(key) or humanize_horizon(key)
+
+
+def display_name(symbol: Optional[str]) -> Optional[str]:
+    """House name for a ticker ('HYPE' → 'Hyperliquid'), else the ticker."""
+    if not symbol:
+        return None
+    key = str(symbol).upper().removeprefix("XYZ-")
+    return TICKER_NAMES.get(key, key)
+
+
 def split_symbol_horizon(code: Optional[str]) -> "tuple[Optional[str], Optional[str]]":
-    """Split a card id like 'HYPE1D' into ('HYPE', '1D'). Best effort."""
+    """Split a card id like 'HYPE1D' or 'XYZ-GOLD1D' into (symbol, horizon)."""
     if not code:
         return (None, None)
-    m = re.fullmatch(r"\s*([A-Za-z]+)(\d+[MHDWmhdw])\s*", str(code))
+    m = re.fullmatch(r"\s*([A-Za-z]+(?:-[A-Za-z]+)?)\s*(\d+[MHDWmhdw])\s*", str(code))
     if not m:
         return (str(code).strip() or None, None)
     return (m.group(1).upper(), m.group(2).upper())
@@ -274,7 +373,9 @@ def split_symbol_horizon(code: Optional[str]) -> "tuple[Optional[str], Optional[
 # ---------------------------------------------------------------------------
 
 _RE_VARIANT = re.compile(r"\btape\s*,\s*([A-Za-z][A-Za-z0-9_-]*)", re.IGNORECASE)
-_RE_LIVE_CARD = re.compile(r"\b([A-Za-z]+\d+[MHDWmhdw])\b\s+is the live card", re.IGNORECASE)
+_RE_LIVE_CARD = re.compile(
+    r"\b([A-Za-z]+(?:-[A-Za-z]+)?\d+[MHDWmhdw])\b\s+is the live card", re.IGNORECASE
+)
 _RE_LAST_ACTION = re.compile(
     r"last-action\s*([+-]?\d*\.?\d+)\s*/\s*c\s*(\d*\.?\d+)\s*,\s*(long|short)",
     re.IGNORECASE,
@@ -285,17 +386,13 @@ _RE_EXIT = re.compile(
 _RE_PRINT = re.compile(r"current\s+print\s*([+-]?\d*\.?\d+)", re.IGNORECASE)
 _RE_CORE = re.compile(r"\bcore\s+(\d+[MHDWmhdw])\s+(held|flipped|cut)\b", re.IGNORECASE)
 _RE_SECONDARY = re.compile(
-    r"\b([A-Za-z]+\d+[MHDWmhdw])\s+(\d*\.?\d+)\s*,\s*(held|flipped|cut)\b", re.IGNORECASE
+    r"\b([A-Za-z]+(?:-[A-Za-z]+)?\d+[MHDWmhdw])\s+(\d*\.?\d+)\s*,\s*(held|flipped|cut)\b",
+    re.IGNORECASE,
 )
 
 
 def parse_tape(text: str) -> TapeCard:
-    """Best-effort parse of a raw tape post into a :class:`TapeCard`.
-
-    Tolerant by design: unknown or missing fields simply stay ``None`` rather
-    than raising, so a partial or slightly reworded tape still yields whatever
-    can be recovered.
-    """
+    """Best-effort parse of a raw tape post into a :class:`TapeCard`."""
     card = TapeCard()
     if not text:
         return card
@@ -349,12 +446,11 @@ def parse_tape(text: str) -> TapeCard:
     card.method_private = bool(re.search(r"method\s+stays\s+private", s, re.IGNORECASE))
     if re.search(re.escape(LIVE_LINK), s, re.IGNORECASE):
         card.link = LIVE_LINK
-
     return card
 
 
 # ---------------------------------------------------------------------------
-# Translation — cryptic tape → relatable plain English
+# Translation — house-accurate plain English
 # ---------------------------------------------------------------------------
 
 
@@ -368,121 +464,7 @@ def _confidence_band(c: float) -> str:
     return "high"
 
 
-def _state_phrase(state: Optional[str]) -> str:
-    return {
-        "held": "unchanged (held)",
-        "flipped": "reversed (flipped)",
-        "cut": "closed out (cut)",
-    }.get((state or "").lower(), state or "")
-
-
-def _side_phrase(side: Optional[str]) -> str:
-    return {
-        "long": "long (expecting the price to rise)",
-        "short": "short (expecting the price to fall)",
-    }.get((side or "").lower(), side or "")
-
-
-def translate_tape(source: Union[str, Dict[str, Any], TapeCard]) -> str:
-    """Turn a tape post (or a structured card) into plain-English prose.
-
-    Accepts a raw tape string, a card ``dict``, or a :class:`TapeCard`.
-    """
-    if isinstance(source, str):
-        card = parse_tape(source)
-    elif isinstance(source, TapeCard):
-        card = source
-    else:
-        card = TapeCard.from_dict(source or {})
-
-    parts: List[str] = []
-
-    if card.variant:
-        parts.append(
-            f"Good morning — this is the {card.variant} tape, a routine status update."
-        )
-    else:
-        parts.append("Here's the tape in plain English.")
-
-    if card.symbol and card.horizon:
-        parts.append(
-            f"The featured card right now is {card.symbol} on the "
-            f"{humanize_horizon(card.horizon)} horizon."
-        )
-    elif card.symbol:
-        parts.append(f"The featured card right now is {card.symbol}.")
-
-    if card.last_action_move is not None or card.side or card.confidence is not None:
-        bits: List[str] = []
-        if card.last_action_move is not None:
-            bits.append(
-                f"since the last action it's measured {card.last_action_move:+g}"
-            )
-        if card.confidence is not None:
-            bits.append(
-                f"confidence is {card.confidence:g} out of 1 "
-                f"({_confidence_band(card.confidence)})"
-            )
-        if card.side:
-            bits.append(f"the read is {_side_phrase(card.side)}")
-        if bits:
-            parts.append(_join_clause(bits) + ".")
-
-    if card.open is True:
-        if card.exit_horizon and card.exit_in:
-            parts.append(
-                f"The position is still open, with the {humanize_horizon(card.exit_horizon)} "
-                f"exit about {_humanize_duration(card.exit_in)} away."
-            )
-        else:
-            parts.append("The position is still open.")
-    elif card.open is False:
-        parts.append("The position is already closed.")
-
-    if card.current_print is not None:
-        sym = card.symbol or "It"
-        parts.append(f"{sym} is currently printing {card.current_print:g}.")
-
-    if card.core_horizon and card.core_state:
-        parts.append(
-            f"The anchor {humanize_horizon(card.core_horizon)} read is "
-            f"{_state_phrase(card.core_state)}."
-        )
-
-    for sec in card.secondary:
-        sym = sec.get("symbol") or ""
-        hz = humanize_horizon(sec.get("horizon"))
-        val = sec.get("print")
-        state = _state_phrase(sec.get("state"))
-        where = f"{sym} on the {hz} horizon" if (sym and hz) else (sym or hz or "another read")
-        tail = f" at {val:g}" if isinstance(val, (int, float)) else ""
-        state_tail = f", {state}" if state else ""
-        parts.append(f"We're also tracking {where}{tail}{state_tail}.")
-
-    if card.measurement_public or card.method_private:
-        parts.append("The desk publishes the measurements but keeps the method private.")
-
-    footer = DISCLAIMER
-    if card.link:
-        footer += f" More at {card.link}."
-    parts.append(footer)
-
-    return " ".join(p for p in parts if p)
-
-
-def _join_clause(bits: List[str]) -> str:
-    """Join clauses into one sentence: 'a, b, and c' with a leading cap."""
-    if not bits:
-        return ""
-    if len(bits) == 1:
-        text = bits[0]
-    else:
-        text = ", ".join(bits[:-1]) + f", and {bits[-1]}"
-    return text[0].upper() + text[1:]
-
-
 def _humanize_duration(raw: str) -> str:
-    """'15h' → 'about 15 hours', '90m' → '90 minutes', '2d' → '2 days'."""
     m = re.fullmatch(r"\s*(\d+)\s*([A-Za-z]+)\s*", str(raw or ""))
     if not m:
         return str(raw or "").strip()
@@ -495,91 +477,476 @@ def _humanize_duration(raw: str) -> str:
     return f"{n} {word}"
 
 
-# ---------------------------------------------------------------------------
-# Legend rendering — the "How to Read the Tape" guide
-# ---------------------------------------------------------------------------
+def _as_card(source: Union[str, Dict[str, Any], TapeCard]) -> TapeCard:
+    if isinstance(source, str):
+        return parse_tape(source)
+    if isinstance(source, TapeCard):
+        return source
+    return TapeCard.from_dict(source or {})
 
 
-def render_legend(fmt: str = "json") -> Union[Dict[str, Any], str]:
-    """Render the guide.
+def _exit_hours(card: TapeCard) -> Optional[int]:
+    raw = card.exit_in or ""
+    m = re.fullmatch(r"\s*(\d+)\s*h\s*", raw, re.I)
+    return int(m.group(1)) if m else None
 
-    ``fmt``:
-      * ``"json"`` (default) — a dict with ``version``, ``intro``, ``glossary``,
-        and pre-rendered ``markdown``/``text`` (handy for a single fetch).
-      * ``"markdown"`` — a Markdown document (str).
-      * ``"text"`` — a plain-text document (str).
+
+def translate_tape(source: Union[str, Dict[str, Any], TapeCard]) -> str:
+    """Turn a tape post (or a structured card) into house-accurate prose.
+
+    Print is unsigned conviction in [0, 1]. last-action is the signed lean
+    (print − 0.5) × 2, not a return. Held is a quiet book, not a sell.
     """
-    fmt = (fmt or "json").lower()
-    if fmt == "markdown":
-        return _legend_markdown()
-    if fmt == "text":
-        return _legend_text()
+    card = _as_card(source)
+
+    parts: List[str] = []
+    name = display_name(card.symbol) or card.symbol
+    clock = horizon_phrase(card.horizon)
+
+    if card.variant == "standard":
+        parts.append(
+            "This is the GM! Index tape on the standard card (house default is standard)."
+        )
+    elif card.variant:
+        parts.append(f"This is the GM! Index tape on the {card.variant} card.")
+    else:
+        parts.append("Here's the tape in plain English.")
+
+    if name and clock:
+        parts.append(
+            f"{name} on the {clock} book is the only name that currently cleared both bars "
+            "— that's the live card."
+        )
+    elif name:
+        parts.append(f"{name} is the live card right now.")
+
+    if card.last_action_move is not None and card.side and card.confidence is not None:
+        parts.append(
+            f"When that event fired, the lean was {card.last_action_move:+g} "
+            f"({card.side}) with {card.confidence:g} confidence."
+        )
+    elif card.last_action_move is not None or card.side or card.confidence is not None:
+        bits = []
+        if card.last_action_move is not None:
+            bits.append(f"lean {card.last_action_move:+g}")
+        if card.side:
+            bits.append(card.side)
+        if card.confidence is not None:
+            bits.append(
+                f"{card.confidence:g} confidence ({_confidence_band(card.confidence)})"
+            )
+        parts.append("When that event fired, " + ", ".join(bits) + ".")
+
+    if card.open is True:
+        if card.exit_in:
+            parts.append(
+                f"That claim is still open — about {_humanize_duration(card.exit_in)} "
+                "left on the horizon clock."
+            )
+        else:
+            parts.append("That claim is still open.")
+    elif card.open is False:
+        parts.append("That claim has already expired.")
+
+    if card.current_print is not None:
+        if card.current_print > 0.5:
+            hint = "above 0.5 leans long"
+        elif card.current_print < 0.5:
+            hint = "below 0.5 leans short"
+        else:
+            hint = "even"
+        parts.append(f"The unsigned print right now is {card.current_print:g} ({hint}).")
+
+    held: List[str] = []
+    if card.core_horizon and card.core_state == "held":
+        held.append(f"Core {card.core_horizon}")
+    elif card.core_horizon and card.core_state:
+        parts.append(
+            f"The rest of the {horizon_phrase(card.core_horizon)} book is {card.core_state}."
+        )
+    for sec in card.secondary:
+        if sec.get("state") == "held" and sec.get("symbol") and sec.get("horizon"):
+            held.append(f"{sec['symbol']}{sec['horizon']}")
+        elif sec.get("state"):
+            sec_name = display_name(sec.get("symbol")) or sec.get("symbol") or "another name"
+            hz = horizon_phrase(sec.get("horizon"))
+            where = f"{sec_name} on the {hz} book" if hz else sec_name
+            val = sec.get("print")
+            extra = f" at {val:g}" if isinstance(val, (int, float)) else ""
+            parts.append(f"{where} is {sec['state']}{extra}.")
+    if held:
+        parts.append(
+            "Held names are quiet on that book — not a broken feed and not a sell: "
+            + ", ".join(held)
+            + "."
+        )
+
+    parts.append(
+        "You can see the numbers. We don't publish how they're made. " + DISCLAIMER
+    )
+    return " ".join(p for p in parts if p)
+
+
+def read_the_tape(text: str) -> Dict[str, Any]:
+    """Original tape + structured decode + plain-English translation."""
+    card = parse_tape(text)
+    d = card.to_dict()
     return {
+        "tape": text,
+        "decoded": d,
+        "translation": translate_tape(card),
+        "source": text,
+        "tickers": _tickers_from_card(card),
+        "rung": card.variant,
+        "live_card": f"{card.symbol}{card.horizon}" if card.symbol and card.horizon else None,
+        "side": card.side,
+        "last_action": (
+            {"signed": f"{card.last_action_move:+g}", "conf": f"{card.confidence:g}"}
+            if card.last_action_move is not None and card.confidence is not None
+            else None
+        ),
+        "print": card.current_print,
+        "exit_hours": _exit_hours(card),
+        "plain": translate_tape(card),
+    }
+
+
+def _tickers_from_card(card: TapeCard) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    if card.symbol and card.horizon:
+        out.append(
+            {"symbol": card.symbol, "horizon": card.horizon, "cell": f"{card.symbol}{card.horizon}"}
+        )
+    for sec in card.secondary:
+        if sec.get("symbol") and sec.get("horizon"):
+            out.append(
+                {
+                    "symbol": sec["symbol"],
+                    "horizon": sec["horizon"],
+                    "cell": f"{sec['symbol']}{sec['horizon']}",
+                }
+            )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Guide rendering — JSON for machines, HTML for first-time readers
+# ---------------------------------------------------------------------------
+
+
+def render_tape_guide() -> Dict[str, Any]:
+    """Machine JSON for /v1/dfy/tape-guide — matches the live contract."""
+    translation = read_the_tape(EXAMPLE_TAPE)
+    return {
+        "title": "How to read the tape",
+        "lede": LEDE,
+        "live_url": LIVE_URL,
+        "soul_url": SOUL_URL,
+        "skills_url": SKILLS_URL,
+        "glossary": [
+            {"term": e["term"], "example": e["example"], "plain": e["plain"]}
+            for e in TAPE_GLOSSARY
+        ],
+        "worked_example": {
+            "cryptic": EXAMPLE_TAPE,
+            "plain": WORKED_EXAMPLE_PLAIN,
+        },
+        "translation": {
+            "source": translation["source"],
+            "tickers": translation["tickers"],
+            "rung": translation["rung"],
+            "live_card": translation["live_card"],
+            "side": translation["side"],
+            "last_action": translation["last_action"],
+            "print": translation["print"],
+            "exit_hours": translation["exit_hours"],
+            "held": ["Core 1D", "HYPE90M"],
+            "plain": translation["plain"],
+        },
+        "personality": {
+            "name": "datafi",
+            "system_prompt": GROK_PERSONA,
+        },
+        "not": list(NOT_LIST),
         "version": LEGEND_VERSION,
-        "title": "How to Read the Tape",
-        "intro": LEGEND_INTRO,
-        "glossary": [dict(entry) for entry in TAPE_GLOSSARY],
-        "markdown": _legend_markdown(),
-        "text": _legend_text(),
         "disclaimer": DISCLAIMER,
         "link": LIVE_LINK,
     }
 
 
+_GUIDE_CSS = """
+:root {
+  --bg: #05070b;
+  --panel: #0b1018;
+  --ink: #e8eef6;
+  --muted: #8b97a8;
+  --line: #1c2533;
+  --accent: #3dffc8;
+  --accent-2: #5b8cff;
+  --warn: #f4d35e;
+  --mono: "IBM Plex Mono", "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+  font: 17px/1.55 var(--sans); }
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 500px at 10% -10%, rgba(61,255,200,.08), transparent 50%),
+    radial-gradient(900px 400px at 90% 0, rgba(91,140,255,.10), transparent 45%),
+    var(--bg);
+}
+a { color: var(--accent); }
+.nav {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: .85rem 1.25rem; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 20;
+  background: rgba(5,7,11,.86); backdrop-filter: blur(12px);
+}
+.brand { font: 800 .78rem/1 var(--sans); letter-spacing: .14em; text-decoration: none;
+  color: var(--ink); }
+.brand small { color: var(--muted); font-weight: 600; margin-left: .4rem; }
+.nav-links { display: flex; gap: 1rem; font: 600 .72rem/1 var(--sans); letter-spacing: .08em; }
+.nav-links a { color: var(--muted); text-decoration: none; }
+.nav-links a:hover, .nav-links a[aria-current="page"] { color: var(--ink); }
+main { max-width: 42rem; margin: 0 auto; padding: 2.4rem 1.25rem 5rem; }
+.kicker { font: 600 .72rem/1.2 var(--sans); letter-spacing: .14em; text-transform: uppercase;
+  color: var(--accent); margin: 0 0 .7rem; }
+h1 { font: 600 2rem/1.2 var(--sans); margin: 0 0 .9rem; letter-spacing: -0.02em; }
+.lede { font-size: 1.08rem; color: var(--muted); margin: 0 0 2rem; }
+h2 { font: 600 .72rem/1.3 var(--sans); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--accent-2); margin: 2.3rem 0 .75rem; }
+.cryptic {
+  margin: 0 0 1.2rem; padding: 1rem 1.1rem; background: var(--panel);
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  white-space: pre-wrap; font: 0.86rem/1.5 var(--mono); color: var(--ink);
+}
+.plain { white-space: pre-wrap; margin: 0 0 1.4rem; color: var(--ink); }
+.walk { margin: 0; border: 1px solid var(--line); background: var(--panel); }
+.walk .row { display: grid; grid-template-columns: minmax(9rem, 0.9fr) 1.3fr;
+  gap: .85rem 1.1rem; padding: .9rem 1rem; border-top: 1px solid var(--line); }
+.walk .row:first-child { border-top: 0; }
+.walk .saw { font: 0.8rem/1.45 var(--mono); color: var(--accent); margin: 0; }
+.walk .means { margin: 0; color: var(--ink); font-size: .95rem; }
+.bars { display: grid; grid-template-columns: 1fr auto 1fr; gap: .75rem; align-items: start;
+  margin: 0 0 .8rem; }
+.bar { background: var(--panel); border: 1px solid var(--line); padding: .85rem 1rem; }
+.bar .label { font: 600 .72rem/1.2 var(--mono); letter-spacing: .06em; color: var(--accent);
+  text-transform: uppercase; margin: 0 0 .35rem; }
+.bar p { margin: 0; color: var(--muted); font-size: .92rem; }
+.and { align-self: center; font: 700 .72rem/1 var(--sans); letter-spacing: .1em; color: var(--warn); }
+.bars-note { color: var(--muted); margin: 0; }
+dl.words { margin: 0; }
+dl.words dt { font: 600 .95rem/1.3 var(--sans); margin: 1rem 0 .2rem; }
+dl.words dt:first-child { margin-top: 0; }
+dl.words .ex { display: block; font: 0.78rem/1.4 var(--mono); color: var(--muted); font-weight: 400; }
+dl.words dd { margin: 0; color: var(--muted); }
+ul.not { margin: 0; padding-left: 1.15rem; color: var(--muted); }
+ul.not li { margin: .3rem 0; }
+.site-footer { margin-top: 2.6rem; padding-top: 1.1rem; border-top: 1px solid var(--line);
+  font: 0.86rem/1.55 var(--sans); color: var(--muted); }
+.site-footer nav { display: flex; flex-wrap: wrap; gap: .35rem 1rem; margin-bottom: .7rem; }
+.site-footer a { color: var(--accent); text-decoration: none; }
+.site-footer a:hover { text-decoration: underline; }
+@media (max-width: 640px) {
+  h1 { font-size: 1.55rem; }
+  .walk .row { grid-template-columns: 1fr; gap: .3rem; }
+  .bars { grid-template-columns: 1fr; }
+  .and { text-align: left; }
+}
+"""
+
+
+def render_tape_guide_html() -> str:
+    """First-reader HTML for a browser opening /v1/dfy/tape-guide."""
+    guide = render_tape_guide()
+    words = []
+    for e in guide["glossary"]:
+        words.append(
+            f"<dt>{html.escape(e['term'])}"
+            f"<span class='ex'>{html.escape(e['example'])}</span></dt>"
+            f"<dd>{html.escape(e['plain'])}</dd>"
+        )
+    rows = []
+    for saw, means in WALK_ROWS:
+        rows.append(
+            "<div class='row'>"
+            f"<p class='saw'>{html.escape(saw)}</p>"
+            f"<p class='means'>{html.escape(means)}</p>"
+            "</div>"
+        )
+    nots = "".join(f"<li>{html.escape(n)}</li>" for n in guide["not"])
+    cryptic = html.escape(guide["worked_example"]["cryptic"])
+    plain = html.escape(guide["worked_example"]["plain"])
+    lede = html.escape(guide["lede"])
+    live = html.escape(LIVE_URL)
+    soul = html.escape(SOUL_URL)
+    skills = html.escape(SKILLS_URL)
+    canon = html.escape(GUIDE_CANONICAL)
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="en">\n<head>\n'
+        '<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        "<title>How to read the tape · DataFi</title>\n"
+        f'<meta name="description" content="{lede}">\n'
+        f'<link rel="canonical" href="{canon}">\n'
+        f'<meta property="og:title" content="How to read the tape · DataFi">\n'
+        f'<meta property="og:description" content="{lede}">\n'
+        f'<meta property="og:url" content="{canon}">\n'
+        '<meta property="og:type" content="article">\n'
+        '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
+        '<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700'
+        '&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">\n'
+        f"<style>{_GUIDE_CSS}</style>\n"
+        "</head>\n<body>\n"
+        '<header class="nav">'
+        f'<a class="brand" href="{live}">DATAFI <small>GM!</small></a>'
+        '<nav class="nav-links" aria-label="House">'
+        f'<a href="{live}">LIVE</a>'
+        f'<a href="{soul}">SOUL</a>'
+        f'<a href="{skills}">SKILLS</a>'
+        '<a href="?format=json" title="Machine JSON">JSON</a>'
+        "</nav></header>\n"
+        "<main>\n"
+        '<p class="kicker">How to read the tape</p>\n'
+        "<h1>One name can be live. The rest stay held.</h1>\n"
+        f'<p class="lede">{lede}</p>\n'
+        "<h2>A promo you might see</h2>\n"
+        f'<blockquote class="cryptic">{cryptic}</blockquote>\n'
+        "<h2>Walk it</h2>\n"
+        f'<div class="walk">{"".join(rows)}</div>\n'
+        "<h2>What that means</h2>\n"
+        f'<p class="plain">{plain}</p>\n'
+        "<h2>Both bars have to clear</h2>\n"
+        '<div class="bars">'
+        '<div class="bar"><p class="label">|signed| ≥ band</p>'
+        "<p>How far the print sits from even. Signed is (print − 0.5) × 2. "
+        "Zero is even. Positive is long; negative is short.</p></div>"
+        '<div class="and">AND</div>'
+        '<div class="bar"><p class="label">confidence ≥ min_conf</p>'
+        "<p>How sure that same reading is, 0 to 1. A large lean with weak "
+        "confidence is not an event. A confident whisper is not an event.</p></div>"
+        "</div>\n"
+        '<p class="bars-note">One bar is not enough. Quiet windows are a held book, '
+        "not a broken feed. Prefer the standard rung unless you asked for purist or "
+        "active.</p>\n"
+        "<h2>The words</h2>\n"
+        f'<dl class="words">{"".join(words)}</dl>\n'
+        "<h2>This is not</h2>\n"
+        f'<ul class="not">{nots}</ul>\n'
+        "</main>\n"
+        '<footer class="site-footer"><nav>'
+        f'<a href="{live}">See the live tape</a>'
+        f'<a href="{soul}">House identity</a>'
+        f'<a href="{skills}">Mint and checkout</a>'
+        '<a href="?format=json">JSON for machines</a>'
+        "</nav>"
+        "<p>Measurement is public. Method stays private. "
+        f"{html.escape(DISCLAIMER)}</p>"
+        "</footer>\n"
+        "</body>\n</html>\n"
+    )
+
+
 def _legend_markdown() -> str:
-    lines = ["# How to Read the Tape", "", LEGEND_INTRO, "", "| On the tape | Example | What it means |", "| --- | --- | --- |"]
+    lines = [
+        "# How to read the tape",
+        "",
+        LEDE,
+        "",
+        "## A promo you might see",
+        "",
+        "```",
+        EXAMPLE_TAPE,
+        "```",
+        "",
+        "## What that means",
+        "",
+        translate_tape(EXAMPLE_TAPE),
+        "",
+        "## The words",
+        "",
+    ]
     for e in TAPE_GLOSSARY:
-        token = e["token"].replace("|", r"\|")
-        example = e["example"].replace("|", r"\|")
-        meaning = e["meaning"].replace("|", r"\|")
-        lines.append(f"| `{token}` | `{example}` | {meaning} |")
-    lines += ["", f"_{DISCLAIMER} See {LIVE_LINK}._"]
+        lines.append(f"**{e['term']}** — `{e['example']}`")
+        lines.append(f": {e['plain']}")
+        lines.append("")
+    lines += ["## This is not", ""]
+    for n in NOT_LIST:
+        lines.append(f"- {n}")
+    lines += ["", f"See {LIVE_URL}. {DISCLAIMER}"]
     return "\n".join(lines)
 
 
 def _legend_text() -> str:
-    lines = ["How to Read the Tape", "", LEGEND_INTRO, ""]
+    lines = ["How to read the tape", "", LEDE, "", "A promo you might see", "", EXAMPLE_TAPE, "", "What that means", "", translate_tape(EXAMPLE_TAPE), "", "The words", ""]
     for e in TAPE_GLOSSARY:
-        lines.append(f"- {e['token']}  (e.g. {e['example']})")
-        lines.append(f"    {e['meaning']}")
-    lines += ["", f"{DISCLAIMER} See {LIVE_LINK}."]
+        lines.append(f"- {e['term']}  (e.g. {e['example']})")
+        lines.append(f"    {e['plain']}")
+    lines += ["", "This is not"]
+    for n in NOT_LIST:
+        lines.append(f"- {n}")
+    lines += ["", f"See {LIVE_URL}. {DISCLAIMER}"]
     return "\n".join(lines)
 
 
-def read_the_tape(text: str) -> Dict[str, Any]:
-    """Convenience bundle for a "what does this mean?" reply: the original tape,
-    its structured decode, and the plain-English translation.
+def render_legend(fmt: str = "json") -> Union[Dict[str, Any], str]:
+    """Compat wrapper. Prefer :func:`render_tape_guide` / HTML for first readers."""
+    fmt = (fmt or "json").lower()
+    if fmt == "markdown":
+        return _legend_markdown()
+    if fmt == "text":
+        return _legend_text()
+    if fmt == "html":
+        return render_tape_guide_html()
+    guide = render_tape_guide()
+    guide["markdown"] = _legend_markdown()
+    guide["text"] = _legend_text()
+    guide["intro"] = LEDE
+    return guide
+
+
+def negotiate_tape_guide(accept: str = "", fmt: str = "") -> Tuple[str, str]:
+    """Pick a representation for /v1/dfy/tape-guide.
+
+    Query ``format=`` wins. Otherwise a browser ``Accept: text/html`` gets the
+    first-reader HTML page; everyone else gets the machine JSON.
     """
-    card = parse_tape(text)
-    return {
-        "tape": text,
-        "decoded": card.to_dict(),
-        "translation": translate_tape(card),
-    }
+    fmt = (fmt or "").strip().lower()
+    accept = (accept or "").lower()
+    if not fmt:
+        # Prefer HTML only when the client actually asked for a document.
+        html_q = "text/html" in accept
+        json_q = "application/json" in accept
+        if html_q and not (json_q and accept.find("application/json") < accept.find("text/html")):
+            fmt = "html"
+        else:
+            fmt = "json"
+    if fmt == "html":
+        return render_tape_guide_html(), "text/html; charset=utf-8"
+    if fmt == "markdown":
+        return _legend_markdown(), "text/markdown; charset=utf-8"
+    if fmt == "text":
+        return _legend_text(), "text/plain; charset=utf-8"
+    return json.dumps(render_tape_guide(), ensure_ascii=False), "application/json; charset=utf-8"
+
+
+def serve_tape_guide(accept: str = "", fmt: str = "") -> Tuple[str, str]:
+    """Never-500 wrapper for the public tape-guide route."""
+    try:
+        return negotiate_tape_guide(accept, fmt)
+    except Exception:
+        return (
+            json.dumps(render_tape_guide(), ensure_ascii=False),
+            "application/json; charset=utf-8",
+        )
 
 
 # ---------------------------------------------------------------------------
-# Grok bot personality wrapper
+# Persona wrapper (external grok bot)
 # ---------------------------------------------------------------------------
-
-GROK_PERSONA = """\
-You are the voice of @datafi_live — a calm, plain-spoken trading-desk friend, not a hype account.
-
-Audience: many readers are seeing the "tape" for the first time and find it cryptic. Your job is to make it relatable without dumbing it down or overpromising.
-
-Voice:
-- Warm, concise, grounded. Sound like a knowledgeable friend explaining what a status line means, not a salesperson.
-- The FIRST time a piece of jargon appears in a message, decode it inline in a few words (e.g. "long (betting price rises)", "c0.58 = 0.58 confidence out of 1").
-- Prefer everyday words over desk shorthand. Keep it short enough for X.
-
-Hard rules:
-- Never promise or imply returns. The tape reports measurements, not outcomes. "last-action +0.413" is a measured result, not a guarantee.
-- Never reveal or speculate about the method/strategy. Only the measurements are public; the method stays private. If asked how it works, say exactly that.
-- Do not give personalized financial advice. Every public lead ends with "Not investment advice." and, when natural, points to datafi.live.
-- Never invent numbers. Only restate values that appear in the tape or card you were given.
-
-When someone is confused by a tape, translate it into one relatable paragraph, then (if it helps) point them to the "How to Read the Tape" guide.\
-"""
 
 
 def wrap_persona(
@@ -587,44 +954,32 @@ def wrap_persona(
     *,
     style: str = "lead",
 ) -> str:
-    """Produce a relatable, on-persona message for the grok bot.
-
-    ``style``:
-      * ``"lead"`` — a first-touch/promo lead: a short relatable hook, the
-        plain-English translation, then the standing footer.
-      * ``"reply"`` — an answer to "what does this mean?": the translation plus
-        a pointer to the full guide.
-      * ``"plain"`` — just the translation (no hook), still on-voice.
-    """
+    """On-persona message. Lead with the name and the clock, not the telegram."""
     style = (style or "lead").lower()
     translation = translate_tape(source)
-
     if style == "plain":
         return translation
-
     if style == "reply":
         return (
-            f"{translation}\n\n"
-            "Want the full key? Here's how to read the tape: "
-            f"{LIVE_LINK}"
+            f"{translation}\n\nThe full key is on the tape guide. Live tape: {LIVE_URL}"
         )
-
-    # lead
-    return (
-        "New here? Here's the tape in plain English:\n\n"
-        f"{translation}"
-    )
+    return translation
 
 
 def render_persona() -> Dict[str, Any]:
-    """Everything the external ``@datafi_live`` grok bot needs to adopt the
-    voice: the persona system prompt, the tape glossary (to ground its own
-    jargon-decoding), and the standing framing. Served at GET /v1/dfy/persona.
-    """
+    """Payload the external grok bot fetches at GET /v1/dfy/persona."""
     return {
         "version": LEGEND_VERSION,
         "persona": GROK_PERSONA,
-        "glossary": [dict(entry) for entry in TAPE_GLOSSARY],
+        "system_prompt": GROK_PERSONA,
+        "name": "datafi",
+        "glossary": [
+            {"term": e["term"], "example": e["example"], "plain": e["plain"]}
+            for e in TAPE_GLOSSARY
+        ],
         "disclaimer": DISCLAIMER,
         "link": LIVE_LINK,
+        "live_url": LIVE_URL,
+        "soul_url": SOUL_URL,
+        "skills_url": SKILLS_URL,
     }

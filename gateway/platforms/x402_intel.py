@@ -140,6 +140,25 @@ class X402IntelAdapter(BasePlatformAdapter):
     async def _handle_health(self, request: "web.Request") -> "web.Response":
         return web.json_response({"status": "ok", "service": "hermes-x402-dfy"})
 
+    async def _handle_tape_guide(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/tape-guide — public first-reader guide. Unpaid.
+
+        Same document as api_server. Browsers get HTML; machines get JSON.
+        """
+        from gateway.dfy_tape import serve_tape_guide
+
+        body, ctype = serve_tape_guide(
+            request.headers.get("Accept") or "",
+            request.query.get("format") or "",
+        )
+        media = ctype.split(";", 1)[0].strip()
+        return web.Response(
+            text=body,
+            content_type=media,
+            charset="utf-8",
+            headers={"Vary": "Accept"},
+        )
+
     async def _handle_legend(self, request: "web.Request") -> "web.Response":
         """GET /v1/dfy/legend — the public "How to Read the Tape" guide.
 
@@ -488,6 +507,7 @@ class X402IntelAdapter(BasePlatformAdapter):
             # Public, unpaid surface for the Live page + the external grok bot:
             # the "How to Read the Tape" guide, the plain-English translation,
             # and the bot personality wrapper. None of these touch the paid feed.
+            self._app.router.add_get("/v1/dfy/tape-guide", self._handle_tape_guide)
             self._app.router.add_get("/v1/dfy/legend", self._handle_legend)
             self._app.router.add_get("/v1/dfy/persona", self._handle_persona)
             self._app.router.add_get("/v1/dfy/translate", self._handle_translate)

@@ -1,33 +1,33 @@
-"""Tests for gateway.dfy_tape — the "read the tape" legend, translator, and
-grok persona wrapper, plus the public x402 legend/translate endpoints.
+"""Tests for gateway.dfy_tape — first-reader tape guide, translator, persona.
 
-The pure-module tests have no third-party deps and always run. The endpoint
-tests importorskip aiohttp (only installed with the messaging/web extras).
+Pure-module tests: no third-party deps. Endpoint tests live in
+test_dfy_tape_endpoints.py (importorskip aiohttp).
 """
+
+import json
 
 import pytest
 
 from gateway import dfy_tape
 from gateway.dfy_tape import (
     DISCLAIMER,
+    EXAMPLE_TAPE,
     LIVE_LINK,
+    LIVE_URL,
+    NOT_LIST,
     TapeCard,
     humanize_horizon,
+    negotiate_tape_guide,
     parse_tape,
     read_the_tape,
     render_legend,
+    render_tape_guide,
+    render_tape_guide_html,
+    serve_tape_guide,
     split_symbol_horizon,
     translate_tape,
     wrap_persona,
 )
-
-# The exact cryptic lead a first-time user sees.
-EXAMPLE_TAPE = """GM! tape, standard.
-
-HYPE1D is the live card: last-action +0.413 / c0.58, long. Still open, 1D exit in ~15h. Current print 0.634.
-
-Core 1D held. HYPE90M 0.553, held. Measurement is public. Method stays private. Not investment advice.
-datafi.live"""
 
 
 # ---------------------------------------------------------------------------
@@ -122,34 +122,37 @@ class TestParseTape:
 class TestTranslateTape:
     def test_translation_is_relatable(self):
         text = translate_tape(EXAMPLE_TAPE)
-        # decoded, human phrasing
-        assert "HYPE" in text
-        assert "1-day" in text
-        assert "90-minute" in text
+        assert "Hyperliquid" in text
+        assert "one-day" in text
         assert "long" in text
         assert "0.58" in text
         assert "0.634" in text
-        assert "0.553" in text
         assert "still open" in text.lower()
         assert "15 hours" in text
-        # standing framing
+        assert "held" in text.lower()
         assert DISCLAIMER in text
-        assert LIVE_LINK in text
+        # first-reader voice: name and clock, not the house telegram
+        assert not text.startswith("GM!")
 
     def test_translation_does_not_invent_numbers(self):
-        # Only values present in the tape should appear.
         text = translate_tape(EXAMPLE_TAPE)
         for bogus in ("0.999", "1.234", "42"):
             assert bogus not in text
+
+    def test_print_is_not_a_return(self):
+        text = translate_tape(EXAMPLE_TAPE).lower()
+        assert "unsigned print" in text
+        assert "lean" in text
+        assert "return" not in text or "not a return" in text
 
     def test_translate_accepts_dict(self):
         text = translate_tape(
             {"symbol": "ETH", "horizon": "4H", "side": "short", "confidence": 0.8}
         )
-        assert "ETH" in text
-        assert "4-hour" in text
+        assert "Ethereum" in text or "ETH" in text
+        assert "four-hour" in text or "4-hour" in text
         assert "short" in text
-        assert "high" in text  # 0.8 → high band
+        assert "0.8" in text or "high" in text
 
     def test_translate_accepts_tapecard(self):
         card = parse_tape(EXAMPLE_TAPE)
@@ -157,42 +160,100 @@ class TestTranslateTape:
 
     def test_confidence_bands(self):
         assert "low" in translate_tape({"symbol": "X", "confidence": 0.2})
-        assert "moderate" in translate_tape({"symbol": "X", "confidence": 0.5})
-        assert "solid" in translate_tape({"symbol": "X", "confidence": 0.7})
-        assert "high" in translate_tape({"symbol": "X", "confidence": 0.9})
+        assert "0.5" in translate_tape({"symbol": "X", "confidence": 0.5})
+        assert "0.7" in translate_tape({"symbol": "X", "confidence": 0.7})
+        assert "0.9" in translate_tape({"symbol": "X", "confidence": 0.9})
 
 
 # ---------------------------------------------------------------------------
-# render_legend / read_the_tape
+# render_tape_guide / legend / HTML
 # ---------------------------------------------------------------------------
 
 
-class TestLegend:
-    def test_json_shape(self):
+class TestTapeGuide:
+    def test_json_matches_live_contract(self):
+        guide = render_tape_guide()
+        assert guide["title"] == "How to read the tape"
+        assert "probability-density tape" in guide["lede"]
+        assert guide["live_url"] == LIVE_URL
+        assert guide["soul_url"].endswith("/soul.md")
+        assert guide["skills_url"].endswith("/skills.md")
+        assert isinstance(guide["glossary"], list) and len(guide["glossary"]) >= 8
+        for entry in guide["glossary"]:
+            assert set(entry) >= {"term", "example", "plain"}
+        assert set(guide["worked_example"]) >= {"cryptic", "plain"}
+        assert "HYPE1D" in guide["worked_example"]["cryptic"]
+        assert "Hyperliquid" in guide["worked_example"]["plain"]
+        tr = guide["translation"]
+        assert tr["live_card"] == "HYPE1D"
+        assert tr["rung"] == "standard"
+        assert tr["side"] == "long"
+        assert tr["print"] == pytest.approx(0.634)
+        assert tr["exit_hours"] == 15
+        assert tr["held"] == ["Core 1D", "HYPE90M"]
+        assert guide["personality"]["name"] == "datafi"
+        assert "tape clerk" in guide["personality"]["system_prompt"]
+        assert guide["not"] == list(NOT_LIST)
+
+    def test_html_is_a_first_reader_page(self):
+        page = render_tape_guide_html()
+        assert page.startswith("<!DOCTYPE html>")
+        assert "How to read the tape" in page
+        assert "HYPE1D" in page
+        assert "Hyperliquid" in page
+        assert "Both bars have to clear" in page
+        assert "Walk it" in page
+        assert LIVE_URL in page
+        assert "Not a buy or sell." in page
+        assert "application/json" not in page  # this is the human face
+        # house visual language, not a generic dump
+        assert "IBM Plex" in page
+        assert "#05070b" in page
+
+    def test_legend_compat_title(self):
         legend = render_legend("json")
-        assert legend["title"] == "How to Read the Tape"
-        assert isinstance(legend["glossary"], list) and len(legend["glossary"]) >= 8
-        for entry in legend["glossary"]:
-            assert set(entry) >= {"token", "example", "meaning"}
-        assert "How to Read the Tape" in legend["markdown"]
-        assert legend["disclaimer"] == DISCLAIMER
-
-    def test_markdown_documents_key_tokens(self):
+        assert legend["title"] == "How to read the tape"
         md = render_legend("markdown")
-        assert md.startswith("# How to Read the Tape")
-        for token in ("last-action", "c0.58", "live card", "Current print"):
-            assert token in md
-
-    def test_text_format(self):
+        assert md.startswith("# How to read the tape")
         txt = render_legend("text")
-        assert "How to Read the Tape" in txt
-        assert LIVE_LINK in txt
+        assert "How to read the tape" in txt
 
     def test_read_the_tape_bundle(self):
         bundle = read_the_tape(EXAMPLE_TAPE)
         assert bundle["tape"] == EXAMPLE_TAPE
         assert bundle["decoded"]["symbol"] == "HYPE"
-        assert "HYPE" in bundle["translation"]
+        assert "Hyperliquid" in bundle["translation"]
+        assert bundle["exit_hours"] == 15
+
+
+class TestNegotiate:
+    def test_browser_accept_gets_html(self):
+        body, ctype = negotiate_tape_guide(
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", ""
+        )
+        assert "text/html" in ctype
+        assert body.startswith("<!DOCTYPE html>")
+
+    def test_json_accept_gets_json(self):
+        body, ctype = negotiate_tape_guide("application/json", "")
+        assert "application/json" in ctype
+        data = json.loads(body)
+        assert data["title"] == "How to read the tape"
+
+    def test_curl_default_gets_json(self):
+        body, ctype = negotiate_tape_guide("*/*", "")
+        assert "application/json" in ctype
+        json.loads(body)
+
+    def test_format_query_wins(self):
+        body, ctype = negotiate_tape_guide("application/json", "html")
+        assert "text/html" in ctype
+        assert "<!DOCTYPE html>" in body
+
+    def test_serve_never_raises(self):
+        body, ctype = serve_tape_guide("text/html", "html")
+        assert "text/html" in ctype
+        assert "How to read the tape" in body
 
 
 # ---------------------------------------------------------------------------
@@ -201,16 +262,17 @@ class TestLegend:
 
 
 class TestPersona:
-    def test_lead_style(self):
+    def test_lead_style_is_plain_first(self):
         msg = wrap_persona(EXAMPLE_TAPE, style="lead")
-        assert msg.startswith("New here?")
-        assert "HYPE" in msg
+        assert "Hyperliquid" in msg
         assert DISCLAIMER in msg
+        assert not msg.startswith("GM!")
+        assert not msg.startswith("New here?")
 
-    def test_reply_style_points_to_guide(self):
+    def test_reply_style_points_to_live(self):
         msg = wrap_persona(EXAMPLE_TAPE, style="reply")
-        assert LIVE_LINK in msg
-        assert "read the tape" in msg.lower()
+        assert LIVE_URL in msg
+        assert "tape guide" in msg.lower()
 
     def test_plain_style_is_bare_translation(self):
         assert wrap_persona(EXAMPLE_TAPE, style="plain") == translate_tape(EXAMPLE_TAPE)
@@ -219,12 +281,14 @@ class TestPersona:
         p = dfy_tape.GROK_PERSONA.lower()
         assert "not investment advice" in p
         assert "method" in p and "private" in p
-        assert "never promise" in p or "never invent" in p
+        assert "never invent" in p
+        assert "datafi" in p
+        assert "datadefi" in p  # do-not-impersonate
 
     def test_render_persona_bundle_for_external_bot(self):
         bundle = dfy_tape.render_persona()
-        # The external grok bot fetches the voice + vocabulary over HTTP.
         assert bundle["persona"] == dfy_tape.GROK_PERSONA
         assert isinstance(bundle["glossary"], list) and len(bundle["glossary"]) >= 8
         assert bundle["disclaimer"] == DISCLAIMER
         assert bundle["link"] == LIVE_LINK
+        assert bundle["live_url"] == LIVE_URL

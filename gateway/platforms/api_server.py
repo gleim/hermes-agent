@@ -15,6 +15,7 @@ Exposes an HTTP server with endpoints:
 - POST /v1/runs/{run_id}/stop       — interrupt a running agent
 - GET  /health                     — health check
 - GET  /health/detailed            — rich status for cross-container dashboard probing
+- GET  /v1/dfy/tape-guide          — public first-reader tape guide (HTML or JSON; no auth)
 
 Any OpenAI-compatible frontend (Open WebUI, LobeChat, LibreChat,
 AnythingLLM, NextChat, ChatBox, etc.) can connect to hermes-agent
@@ -906,6 +907,28 @@ class APIServerAdapter(BasePlatformAdapter):
             "pid": os.getpid(),
         })
 
+    async def _handle_dfy_tape_guide(self, request: "web.Request") -> "web.Response":
+        """GET /v1/dfy/tape-guide — public first-reader guide. No auth.
+
+        Browsers (Accept: text/html) get the house HTML face. Machines get JSON.
+        ``?format=html|json|markdown|text`` wins over Accept. Never 500 — a
+        render failure falls back to JSON so a first-time reader never sees
+        the aiohttp error page.
+        """
+        from gateway.dfy_tape import serve_tape_guide
+
+        body, ctype = serve_tape_guide(
+            request.headers.get("Accept") or "",
+            request.query.get("format") or "",
+        )
+        media = ctype.split(";", 1)[0].strip()
+        return web.Response(
+            text=body,
+            content_type=media,
+            charset="utf-8",
+            headers={"Vary": "Accept"},
+        )
+
     async def _handle_dfy_ingest(self, request: "web.Request") -> "web.Response":
         """POST /v1/dfy/ingest — receive trade/indicator events PUSHED by a dfai
         trader. The trader connects OUT to Hermes (Telegram/Discord model), so no
@@ -1123,6 +1146,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 "run_events": {"method": "GET", "path": "/v1/runs/{run_id}/events"},
                 "run_approval": {"method": "POST", "path": "/v1/runs/{run_id}/approval"},
                 "run_stop": {"method": "POST", "path": "/v1/runs/{run_id}/stop"},
+                "dfy_tape_guide": {"method": "GET", "path": "/v1/dfy/tape-guide"},
             },
         })
 
@@ -3528,6 +3552,9 @@ class APIServerAdapter(BasePlatformAdapter):
             # Lives on the public api_server surface so a single exposed port
             # (e.g. Railway) reaches it; auth via HERMES_INGEST_TOKEN.
             self._app.router.add_post("/v1/dfy/ingest", self._handle_dfy_ingest)
+            # Public first-reader tape guide — no auth, like /health. Browsers
+            # get HTML; machines get JSON. Must stay in front of the paid feed.
+            self._app.router.add_get("/v1/dfy/tape-guide", self._handle_dfy_tape_guide)
             # DFY feed read surface for chat.datadefi.ai (same store the oracle reads).
             self._app.router.add_get("/v1/dfy/mechanisms", self._handle_dfy_mechanisms)
             self._app.router.add_get("/v1/dfy/signals", self._handle_dfy_signals)
