@@ -141,6 +141,54 @@ async def test_registers_native_thread_slash_command(adapter):
     adapter._handle_thread_create_slash.assert_awaited_once_with(interaction, "Planning", "", 1440)
 
 
+_DFY_OPERATOR_SLASH = (
+    "dfy-mechanisms",
+    "dfy-signals",
+    "dfy-activity",
+    "dfy-oracle",
+    "dfy-live",
+)
+
+
+def test_dfy_operator_slash_off_by_default(adapter, monkeypatch):
+    """Public picker must not advertise Hermes /dfy-* dumps."""
+    monkeypatch.delenv("DISCORD_DFY_OPERATOR_SLASH", raising=False)
+    adapter._register_slash_commands()
+    tree_names = set(adapter._client.tree.commands.keys())
+    missing = [name for name in _DFY_OPERATOR_SLASH if name in tree_names]
+    assert missing == [], f"operator dumps leaked onto the public picker: {missing}"
+    # Session verbs that sit next to the former /dfy-* block stay registered.
+    assert "thread" in tree_names
+    assert "queue" in tree_names
+    assert "help" in tree_names
+
+
+@pytest.mark.parametrize("flag", ["1", "true", "yes", "on", "TRUE"])
+def test_dfy_operator_slash_opt_in(adapter, monkeypatch, flag):
+    monkeypatch.setenv("DISCORD_DFY_OPERATOR_SLASH", flag)
+    adapter._register_slash_commands()
+    tree_names = set(adapter._client.tree.commands.keys())
+    for name in _DFY_OPERATOR_SLASH:
+        assert name in tree_names, f"/{name} should register when DISCORD_DFY_OPERATOR_SLASH={flag}"
+    assert "queue" in tree_names
+
+
+@pytest.mark.parametrize("flag", ["0", "false", "no", "off", ""])
+def test_dfy_operator_slash_falsey_stays_hidden(adapter, monkeypatch, flag):
+    monkeypatch.setenv("DISCORD_DFY_OPERATOR_SLASH", flag)
+    adapter._register_slash_commands()
+    tree_names = set(adapter._client.tree.commands.keys())
+    leaked = [name for name in _DFY_OPERATOR_SLASH if name in tree_names]
+    assert leaked == [], f"falsey DISCORD_DFY_OPERATOR_SLASH={flag!r} leaked {leaked}"
+
+
+def test_dfy_operator_slash_enabled_helper(monkeypatch):
+    monkeypatch.delenv("DISCORD_DFY_OPERATOR_SLASH", raising=False)
+    assert DiscordAdapter._dfy_operator_slash_enabled() is False
+    monkeypatch.setenv("DISCORD_DFY_OPERATOR_SLASH", "true")
+    assert DiscordAdapter._dfy_operator_slash_enabled() is True
+
+
 @pytest.mark.asyncio
 async def test_registers_native_restart_slash_command(adapter):
     adapter._run_simple_slash = AsyncMock()

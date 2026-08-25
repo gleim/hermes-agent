@@ -1,7 +1,8 @@
 """``dfy_oracle`` agent tool — exposes the live DFY trading feed + strategy
 sources + published reports to the conversational agent.
 
-This is the chat-GUI counterpart to the Discord ``/dfy-oracle`` slash command:
+This is the chat-GUI counterpart to the operator-only Discord ``/dfy-oracle``
+slash command (registered only when ``DISCORD_DFY_OPERATOR_SLASH=true``):
 both build their context from :mod:`dfy_intel.oracle`, so the web / TUI / CLI
 chat gets the same strategy-aware, report-aware analysis surface. The tool
 returns structured context (it does NOT call a second LLM) — the agent already
