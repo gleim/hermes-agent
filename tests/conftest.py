@@ -212,6 +212,7 @@ _HERMES_BEHAVIORAL_VARS = frozenset({
     # behavior and flake button-authorization tests.
     "TELEGRAM_ALLOWED_USERS",
     "DISCORD_ALLOWED_USERS",
+    "DISCORD_DFY_OPERATOR_SLASH",
     "WHATSAPP_ALLOWED_USERS",
     "SLACK_ALLOWED_USERS",
     "SIGNAL_ALLOWED_USERS",

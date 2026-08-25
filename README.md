@@ -4,7 +4,7 @@
 
 # Hermes Agent ☤
 
-> **Fork note (03.19.26 workspace):** this tree extends Hermes with an **x402 DFY HTTP gateway**, a **Virtuals/Uniswap settlement ledger**, and **Discord** `/dfy-*` commands including **`/dfy-oracle`**. See **[FORK.md](FORK.md)** for architecture and environment variables.
+> **Fork note (03.19.26 workspace):** this tree extends Hermes with an **x402 DFY HTTP gateway** and a **Virtuals/Uniswap settlement ledger**. Public DFY Discord verbs (`/help`, `/ask`) live on `discord.mutantdefi.com`, not this adapter. Hermes `/dfy-*` dumps stay off the picker unless `DISCORD_DFY_OPERATOR_SLASH=true`. See **[FORK.md](FORK.md)**.
 
 <p align="center">
   <a href="https://hermes-agent.nousresearch.com/docs/"><img src="https://img.shields.io/badge/Docs-hermes--agent.nousresearch.com-FFD700?style=for-the-badge" alt="Documentation"></a>

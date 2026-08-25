@@ -4,13 +4,30 @@ This directory extends [Nous Research Hermes Agent](https://github.com/NousResea
 
 1. **Expose the DFY feed over HTTP** — strategy mechanisms (incl. open trades + latest indicators per pair), signals, and activity — behind an [x402](https://docs.cdp.coinbase.com/x402/docs/http-402)-style **402 Payment Required** flow.
 2. **Record inbound settlements** for linkage to **Virtuals.io–style agent token** distribution (Uniswap metadata in ledger rows; on-chain execution is external).
-3. **Discord** — `/dfy-*` slash commands, **`/dfy-oracle`** (feed + strategy sources), and **`/dfy-live`** (read-only panels aligned with the reference Telegram RPC bundle, fetched from the runner REST API, wrapped in Hermes commentary).
+3. **Discord — two surfaces, do not mix them.** The public DFY bot (`https://discord.mutantdefi.com`) owns the room verbs. This Hermes adapter does **not** register `/dfy-*` dumps on the public picker. Set **`DISCORD_DFY_OPERATOR_SLASH=true`** only on a private operator bot.
 
 **dfai** strategies push into the same store via `DfyHermesIntelMixin` (`dfai/user_data/strategies/dfy_hermes_intel_mixin.py`). Point **`DFY_ORACLE_STRATEGY_PATHS`** at the same `.py` files your bot loads so the oracle matches production logic.
 
-### Discord slash command catalog
+### Public DFY Discord vs this adapter
 
-Registered in `gateway/platforms/discord.py` (`_register_slash_commands`). Installed Hermes **skills** may add more dynamic slash commands at runtime.
+House (`https://datafi.live/skills.md`) names **`/help` and `/ask` only** as Discord verbs. Do not tell humans to type slash commands. GROUP is the room door. Do not publish feed construction, omega, or raw Tier-C.
+
+| Surface | Host | Public interface | Liveness |
+|--------|------|------------------|----------|
+| DFY Discord bot | `discord.mutantdefi.com` | Interactions webhook; verbs `/help`, `/ask` (named). Invite `discord.gg/h2xZunjVge`. Guild “DFY, the GM! Oracle”. | `/health` 200 `dfy-discord-bot`. `POST /interactions` unsigned → 401 (webhook live). **Not this repo.** |
+| Desk map | `desk.mutantdefi.com` | Official Discord map: free `/journal` → `GET /v1/dfy/journal`. Paid `/desk` `/brief` `/journal` `/regime` `/posture` `/attribution` `/guidance` (`GET /v1/dfy/guidance/crypto`). | `/health` 200. Journal 200 (empty). Paid **402** when params present. `/desk` without `symbol` is **400**. Bare `/v1/dfy/guidance` is **404** — use `/guidance/crypto`. `/v1/dfy/journal/latest` 404 when empty. |
+| GM map | `gm.mutantdefi.com` | Service export Discord verbs: `/conviction` `/lattice` `/weights` `/omega_book` `/hazard` `/subscribe` plus the desk verbs. | `/health` 200. Promo conviction 200. Lattice/weights/omega_book **402**. `/hazard` needs `symbol`+`side`+`entry_ts` (400 otherwise). Do **not** name `/omega_book` to humans (construction). |
+| Marketing HTML | `mutantdefi.com/dfy` | Heading “Discord Slash Command Catalog”; start copy is `/help` or `/ask`. Still lists subscribe/desk/brief/conviction. | **200** as a face. **Discard as registry** — official maps are desk/gm JSON. House: name `/help` and `/ask` only. |
+| Hermes gateway | `hermes.mutantdefi.com` | Hermes session slash + optional operator `/dfy-*`. | **502** (Railway). Not the public DFY picker. |
+| Guidance host | `guidance.mutantdefi.com` | Older docs pointed paid guidance here. | **NXDOMAIN** — discard this hostname. Desk `/guidance` is the live verb. |
+| `catalog.mutantdefi.com` | Desk JSON `origin` | — | **NXDOMAIN** — discard. Desk lives at `desk.mutantdefi.com`. |
+| `www.mutantdefi.com` | — | — | **NXDOMAIN**. |
+
+Machine JSON stays on operating prefixes (`desk.`, `gm.`, Hermes `api_server`). Faces vs machine: `discord.mutantdefi.com` is the bot webhook.
+
+### Hermes Discord slash command catalog
+
+Registered in `gateway/platforms/discord.py` (`_register_slash_commands`). Installed Hermes **skills** may add more dynamic slash commands at runtime. These are the **Hermes session** verbs, not the public DFY room catalog.
 
 | Command | Parameters | Description |
 |--------|------------|-------------|
@@ -35,15 +52,22 @@ Registered in `gateway/platforms/discord.py` (`_register_slash_commands`). Insta
 | `/voice` | `mode` (choices) | Voice: channel, leave, on, tts, off, status |
 | `/update` | — | Update Hermes Agent to latest |
 | `/thread` | `name`, `message` (optional), `auto_archive_duration` | Create a thread and optional first message |
+
+**Permissioning:** `DISCORD_ALLOWED_USERS` (and optional `DISCORD_DFY_ROLE_IDS` when operator `/dfy-*` is enabled).
+
+### Operator-only `/dfy-*` (opt-in, discarded from the public picker)
+
+Off by default. Handlers remain in `discord.py`; they are **not** registered on the Discord command tree unless **`DISCORD_DFY_OPERATOR_SLASH=true`** (`1` / `true` / `yes` / `on`). These dump raw store, strategy source, or runner P&L — not the public DFY catalog. They are also absent from `COMMAND_REGISTRY`, so auto-register will not put them back.
+
+| Command | Parameters | Description |
+|--------|------------|-------------|
 | `/dfy-mechanisms` | — | DFY mechanisms JSON (ephemeral; mirrors x402 `/v1/dfy/mechanisms`) |
 | `/dfy-signals` | `limit` (1–200, default 25) | Recent DFY signals (mirrors x402 `/v1/dfy/signals`) |
 | `/dfy-activity` | `limit` (1–200, default 25) | Recent DFY activity (mirrors x402 `/v1/dfy/activity`) |
 | `/dfy-oracle` | `focus` (optional) | Strategy oracle: agent analyzes DFY feed + configured strategy sources |
-| `/dfy-live` | `view` (choice), `pair` (optional), `timescale` (default 7) | Fetches runner REST JSON for the selected panel (status, profit, balance, performance, trades, daily/weekly/monthly, stats, count, locks, health, version, sysinfo, whitelist, entries/exits/mix_tags, config, logs) and asks Hermes for strategy-aware live analysis |
+| `/dfy-live` | `view` (choice), `pair` (optional), `timescale` (default 7) | Fetches runner REST JSON for the selected panel and asks Hermes for strategy-aware live analysis |
 
-**Permissioning:** `DISCORD_ALLOWED_USERS` (and optional `DISCORD_DFY_ROLE_IDS` for DFY commands). DFY JSON replies are ephemeral.
-
-**Runner REST (for `/dfy-live`):** enable `api_server` on the dfai runner, then on the Hermes host set **`DFY_FT_API_URL`** (e.g. `http://127.0.0.1:8080/api/v1`), **`DFY_FT_API_USER`**, **`DFY_FT_API_PASSWORD`**. Hermes calls **GET** endpoints only (no Discord-triggered force-exit / stop / start).
+**Runner REST (for `/dfy-live`):** enable `api_server` on the dfai runner, then on the Hermes host set **`DFY_FT_API_URL`** (e.g. `http://127.0.0.1:8080/api/v1`), **`DFY_FT_API_USER`**, **`DFY_FT_API_PASSWORD`**. Hermes calls **GET** endpoints only (no Discord-triggered force-exit / stop / start). DFY JSON replies are ephemeral.
 
 ## Layout
 
@@ -145,15 +169,17 @@ Endpoints (all **posture-only** Tier A — no raw indicator digests or strategy 
 - `GET /v1/dfy/regime`, `/v1/dfy/posture`, `/v1/dfy/attribution`, `/v1/dfy/brief`, `/v1/dfy/desk`, `/v1/dfy/guidance/crypto`
 - Legacy aliases (same posture-only payloads, include a `deprecated` note): `/v1/dfy/mechanisms`, `/v1/dfy/signals`, `/v1/dfy/activity`
 
-Public paid guidance also ships from the standalone `guidance-gateway` service in `dfy-trader-intel` (`guidance.mutantdefi.com`).
+Public paid guidance also ships from the standalone `guidance-gateway` service in `dfy-trader-intel`. The hostname `guidance.mutantdefi.com` currently **NXDOMAIN** — do not advertise it as a live slash or HTTP face.
 
 Settled requests append lines to `~/.hermes/dfy_feed/virtuals_settlement_ledger.jsonl`.
 
-## DFY oracle — `/dfy-oracle` (Discord) **and** the `dfy_oracle` chat tool
+## DFY oracle — operator Discord `/dfy-oracle` **and** the `dfy_oracle` chat tool
 
-**Tier-C, operator-only.** Both surfaces require `DFY_ORACLE_ENABLED=true` **and**
-`HERMES_INGEST_TOKEN` on the gateway. The vendored corpus alone does not enable
-them — posture-only x402/api_server read routes never expose strategy source.
+**Tier-C, operator-only.** Discord `/dfy-oracle` is not on the public picker
+(requires `DISCORD_DFY_OPERATOR_SLASH=true` **and** the gates below). Both
+surfaces require `DFY_ORACLE_ENABLED=true` **and** `HERMES_INGEST_TOKEN` on the
+gateway. The vendored corpus alone does not enable them — posture-only
+x402/api_server read routes never expose strategy source.
 
 Both build identical context from `dfy_intel.oracle`: live feed
 (runner meta, mechanisms incl. open trades + per-pair indicators, recent
